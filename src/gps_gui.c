@@ -56,6 +56,14 @@ typedef struct {
     char gpx_filename[256];
     bool gpx_export_success;
     char gpx_export_message[256];
+    
+    // Connection dialog state
+    bool show_connection_dialog;
+    bool auto_connect_enabled;
+    char selected_port[256];
+    int selected_baud;
+    char available_ports[16][256];
+    int available_port_count;
 } app_state_t;
 
 // Function declarations
@@ -149,6 +157,13 @@ int main(int argc, char** argv) {
     strcpy(app_state.connection_status_text, "Not Connected");
     app_state.last_error[0] = '\0';
     strcpy(app_state.gpx_filename, "gps_track.gpx");
+    
+    // Initialize connection dialog state
+    app_state.show_connection_dialog = false;
+    app_state.auto_connect_enabled = true;  // Default enabled
+    strcpy(app_state.selected_port, "");
+    app_state.selected_baud = 9600;
+    app_state.available_port_count = 0;
 
     bool done = false;
     ImVec4 clear_color = {0.11f, 0.11f, 0.11f, 1.00f}; // Dark background
@@ -287,16 +302,35 @@ void render_header_bar(app_state_t* app) {
         // Connection menu
         if (igBeginMenu("Connection", true)) {
             if (igMenuItem_Bool("Connect...", NULL, false, !gps_serial_is_open(&app->gps_serial))) {
-                // Open connection dialog
+                app->show_connection_dialog = true;
+                // Refresh available ports when opening dialog
+                gps_serial_list_ports(app->available_ports, 16, &app->available_port_count);
             }
             if (igMenuItem_Bool("Disconnect", NULL, false, gps_serial_is_open(&app->gps_serial))) {
                 gps_serial_close(&app->gps_serial);
                 app->gps_data.status = GPS_STATUS_DISCONNECTED;
                 strcpy(app->connection_status_text, "Disconnected");
+                strcpy(app->gps_data.port_name, "");
+                app->gps_data.baud_rate = 0;
             }
             igSeparator();
-            if (igMenuItem_Bool("Auto-connect", NULL, false, true)) {
-                // TODO: Implement auto-connect
+            bool auto_connect = app->auto_connect_enabled;
+            if (igMenuItem_Bool("Auto-connect", NULL, auto_connect, true)) {
+                app->auto_connect_enabled = !app->auto_connect_enabled;
+                if (app->auto_connect_enabled && !gps_serial_is_open(&app->gps_serial)) {
+                    // Try to auto-connect immediately
+                    char ports[16][256];
+                    int port_count;
+                    if (gps_serial_list_ports(ports, 16, &port_count) && port_count > 0) {
+                        if (gps_serial_open(&app->gps_serial, ports[0], 9600)) {
+                            app->gps_data.status = GPS_STATUS_CONNECTED;
+                            strcpy(app->gps_data.port_name, ports[0]);
+                            app->gps_data.baud_rate = 9600;
+                            snprintf(app->connection_status_text, sizeof(app->connection_status_text), 
+                                    "Auto-connected to %s", ports[0]);
+                        }
+                    }
+                }
             }
             igEndMenu();
         }
@@ -1295,11 +1329,104 @@ void render_status_bar(app_state_t* app) {
 }
 
 void render_connection_dialog(app_state_t* app) {
-    // This would show a connection dialog when needed
-    // For now, we'll implement a simple auto-connect for available ports
+    // Show connection dialog when requested
+    if (app->show_connection_dialog) {
+        bool open = app->show_connection_dialog;
+        igSetNextWindowSize((ImVec2){400, 300}, ImGuiCond_FirstUseEver);
+        
+        if (igBegin("GPS Connection", &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+            igText("Connect to GPS Device");
+            igSeparator();
+            
+            // Port selection
+            igText("Available Ports:");
+            if (app->available_port_count > 0) {
+                for (int i = 0; i < app->available_port_count; i++) {
+                    bool is_selected = (strcmp(app->selected_port, app->available_ports[i]) == 0);
+                    if (igRadioButton_Bool(app->available_ports[i], is_selected)) {
+                        strcpy(app->selected_port, app->available_ports[i]);
+                    }
+                }
+            } else {
+                igTextColored((ImVec4){1.0f, 0.7f, 0.0f, 1.0f}, "No GPS devices found!");
+                igText("Make sure your GPS device is connected via USB.");
+            }
+            
+            igSeparator();
+            
+            // Baud rate selection
+            igText("Baud Rate:");
+            int current_baud_index = 1; // Default 9600
+            const char* baud_options[] = {"4800", "9600", "19200", "38400", "57600", "115200"};
+            const int baud_values[] = {4800, 9600, 19200, 38400, 57600, 115200};
+            
+            // Find current baud index
+            for (int i = 0; i < 6; i++) {
+                if (baud_values[i] == app->selected_baud) {
+                    current_baud_index = i;
+                    break;
+                }
+            }
+            
+            if (igCombo_Str_arr("##baud", &current_baud_index, baud_options, 6, -1)) {
+                app->selected_baud = baud_values[current_baud_index];
+            }
+            
+            igSeparator();
+            
+            // Auto-connect checkbox
+            igCheckbox("Enable Auto-connect", &app->auto_connect_enabled);
+            igText("Automatically connect to first available GPS device on startup");
+            
+            igSeparator();
+            
+            // Connection buttons
+            bool can_connect = (strlen(app->selected_port) > 0 && !gps_serial_is_open(&app->gps_serial));
+            
+            if (!can_connect) igBeginDisabled(true);
+            if (igButton("Connect", (ImVec2){80, 0})) {
+                if (gps_serial_open(&app->gps_serial, app->selected_port, app->selected_baud)) {
+                    app->gps_data.status = GPS_STATUS_CONNECTED;
+                    strcpy(app->gps_data.port_name, app->selected_port);
+                    app->gps_data.baud_rate = app->selected_baud;
+                    snprintf(app->connection_status_text, sizeof(app->connection_status_text), 
+                            "Connected to %s at %d baud", app->selected_port, app->selected_baud);
+                    app->show_connection_dialog = false;
+                } else {
+                    snprintf(app->last_error, sizeof(app->last_error), 
+                            "Failed to connect to %s", app->selected_port);
+                }
+            }
+            if (!can_connect) igEndDisabled();
+            
+            igSameLine(0, 10);
+            if (igButton("Refresh Ports", (ImVec2){100, 0})) {
+                gps_serial_list_ports(app->available_ports, 16, &app->available_port_count);
+                strcpy(app->selected_port, ""); // Clear selection
+            }
+            
+            igSameLine(0, 10);
+            if (igButton("Cancel", (ImVec2){80, 0})) {
+                app->show_connection_dialog = false;
+            }
+            
+            // Show error if any
+            if (strlen(app->last_error) > 0) {
+                igSeparator();
+                igTextColored((ImVec4){1.0f, 0.0f, 0.0f, 1.0f}, "Error: %s", app->last_error);
+            }
+        }
+        
+        if (!open) {
+            app->show_connection_dialog = false;
+        }
+        
+        igEnd();
+    }
     
+    // Auto-connect logic (only runs once at startup)
     static bool tried_auto_connect = false;
-    if (!tried_auto_connect && !gps_serial_is_open(&app->gps_serial)) {
+    if (!tried_auto_connect && app->auto_connect_enabled && !gps_serial_is_open(&app->gps_serial)) {
         tried_auto_connect = true;
         
         char ports[16][256];
@@ -1311,7 +1438,7 @@ void render_connection_dialog(app_state_t* app) {
                 strcpy(app->gps_data.port_name, ports[0]);
                 app->gps_data.baud_rate = 9600;
                 snprintf(app->connection_status_text, sizeof(app->connection_status_text), 
-                        "Connected to %s", ports[0]);
+                        "Auto-connected to %s", ports[0]);
             }
         }
     }
