@@ -1,0 +1,38 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.h": "c",
+            "*.c": "c"
+        },
+        "C_Cpp.default.cStandard": "c99",
+        "C_Cpp.default.cppStandard": "c++11",
+        "files.exclude": {
+            "**/.git": true,
+            "**/.DS_Store": true,
+            "**/gps_gui": true,
+            "**/*.o": true,
+            "data/*.nmea": true,
+            "data/*.gpx": true,
+            "imgui.ini": true
+        },
+        "search.exclude": {
+            "**/node_modules": true,
+            "**/bower_components": true,
+            "**/*.code-search": true,
+            "src/cimgui/imgui": true
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-vscode.cpptools",
+            "ms-vscode.cmake-tools",
+            "github.copilot",
+            "github.copilot-chat"
+        ]
+    }
+}

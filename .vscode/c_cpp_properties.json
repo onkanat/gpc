@@ -1,35 +1,41 @@
 {
-  "version": 4,
-  "configurations": [
-    {
-      "name": "macOS",
-      "includePath": [
-        "${workspaceFolder}",
-        "${workspaceFolder}/**",
-        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include",
-        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include",
-        "/Library/Developer/CommandLineTools/usr/include"
-      ],
-      "browse": {
-        "path": [
-          "${workspaceFolder}",
-          "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include",
-          "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include"
-        ],
-        "limitSymbolsToIncludedHeaders": true
-      },
-      "defines": [
-        "_DARWIN_C_SOURCE"
-      ],
-      "macFrameworkPath": [
-        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks",
-        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks",
-        "/System/Library/Frameworks"
-      ],
-      "compilerPath": "/usr/bin/clang",
-      "compilerArgs": ["-isysroot", "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"],
-      "cStandard": "c99",
-      "intelliSenseMode": "macos-clang-arm64"
-    }
-  ]
+    "configurations": [
+        {
+            "name": "GPC C/C++",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/src/include",
+                "${workspaceFolder}/src/cimgui",
+                "${workspaceFolder}/src/cimgui/imgui",
+                "${workspaceFolder}/src/cimgui/imgui/backends",
+                "/usr/local/include",
+                "/opt/homebrew/include",
+                "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include"
+            ],
+            "defines": [
+                "CIMGUI_DEFINE_ENUMS_AND_STRUCTS",
+                "GL_SILENCE_DEPRECATION",
+                "_DARWIN_C_SOURCE"
+            ],
+            "macFrameworkPath": [
+                "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks",
+                "/System/Library/Frameworks"
+            ],
+            "compilerPath": "/usr/bin/clang",
+            "compilerArgs": ["-isysroot", "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"],
+            "cStandard": "c99",
+            "cppStandard": "c++11",
+            "intelliSenseMode": "macos-clang-arm64",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/src",
+                    "/usr/local/include",
+                    "/opt/homebrew/include"
+                ],
+                "limitSymbolsToIncludedHeaders": true,
+                "databaseFilename": ""
+            }
+        }
+    ],
+    "version": 4
 }

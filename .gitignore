@@ -19,7 +19,8 @@ gps_main
 
 # IDE and editor files
 .idea/
-.vscode/
+.vscode/settings.json
+.vscode/.ropeproject/
 *.swp
 *.swo
 
