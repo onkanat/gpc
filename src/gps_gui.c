@@ -4,6 +4,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <math.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <SDL.h>
 
 #ifndef M_PI
@@ -85,9 +87,13 @@ void render_connection_dialog(app_state_t* app);
 void render_gpx_export_dialog(app_state_t* app);
 void update_gps_data(app_state_t* app);
 void setup_imgui_style(void);
+void ensure_data_directory(void);
 
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
+    
+    // Ensure data directory exists
+    ensure_data_directory();
     
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         printf("SDL_Init Error: %s\n", SDL_GetError());
@@ -156,7 +162,7 @@ int main(int argc, char** argv) {
     app_state.show_gpx_export_dialog = false;
     strcpy(app_state.connection_status_text, "Not Connected");
     app_state.last_error[0] = '\0';
-    strcpy(app_state.gpx_filename, "gps_track.gpx");
+    strcpy(app_state.gpx_filename, "data/gps_track.gpx");
     
     // Initialize connection dialog state
     app_state.show_connection_dialog = false;
@@ -355,7 +361,7 @@ void render_header_bar(app_state_t* app) {
                 char filename[256];
                 time_t t = time(NULL);
                 struct tm* tm_info = localtime(&t);
-                strftime(filename, sizeof(filename), "gps_log_%Y%m%d_%H%M%S.nmea", tm_info);
+                strftime(filename, sizeof(filename), "data/gps_log_%Y%m%d_%H%M%S.nmea", tm_info);
                 gps_data_start_logging(&app->gps_data, filename);
             }
             if (igMenuItem_Bool("Stop Logging", NULL, false, app->gps_data.logging_enabled)) {
@@ -1456,6 +1462,20 @@ void update_gps_data(app_state_t* app) {
         } else if (processed > 0) {
             // Update map system with new GPS data
             map_system_update(&app->map_system, &app->gps_data);
+        }
+    }
+}
+
+void ensure_data_directory(void) {
+    struct stat st;
+    
+    // Check if data directory exists
+    if (stat("data", &st) == -1) {
+        // Create data directory if it doesn't exist
+        if (mkdir("data", 0755) != 0) {
+            printf("Warning: Could not create data directory\n");
+        } else {
+            printf("Created data directory\n");
         }
     }
 }

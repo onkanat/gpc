@@ -28,7 +28,8 @@ gps_main
 *.nmea
 gps_log_*.nmea
 .env*
-data/gps_log.txt
+data/gps_log_*.nmea
+data/gps_track.gpx
 
 # macOS files
 .DS_Store
