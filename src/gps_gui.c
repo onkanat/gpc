@@ -1076,9 +1076,10 @@ void render_raw_data_panel(app_state_t* app) {
             }
         }
         
-        // Auto-scroll to bottom
-        if (console->auto_scroll) {
+        // Auto-scroll to bottom only if auto-scroll is enabled AND there's new data
+        if (console->auto_scroll && console_has_new_data(console)) {
             igSetScrollHereY(1.0f);
+            console_mark_data_consumed(console);
         }
     }
     igEndChild();
@@ -1318,7 +1319,8 @@ void render_connection_dialog(app_state_t* app) {
 
 void update_gps_data(app_state_t* app) {
     if (gps_serial_is_open(&app->gps_serial)) {
-        int processed = gps_serial_read_data(&app->gps_serial, &app->gps_data);
+        // Use the new function that passes console to get raw NMEA data
+        int processed = gps_serial_read_data_with_console(&app->gps_serial, &app->gps_data, &app->console);
         if (processed < 0) {
             // Error reading data
             gps_serial_close(&app->gps_serial);
@@ -1327,14 +1329,6 @@ void update_gps_data(app_state_t* app) {
         } else if (processed > 0) {
             // Update map system with new GPS data
             map_system_update(&app->map_system, &app->gps_data);
-            
-            // Add raw NMEA data to console (simplified - we'd need actual raw line access)
-            if (app->gps_data.total_sentences > 0) {
-                char raw_line[256];
-                snprintf(raw_line, sizeof(raw_line), "NMEA sentence received (total: %lu)", 
-                        app->gps_data.total_sentences);
-                console_add_line(&app->console, raw_line);
-            }
         }
     }
 }

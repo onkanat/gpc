@@ -23,6 +23,10 @@ bool gps_serial_open(gps_serial_t* serial, const char* port, int baud_rate);
 void gps_serial_close(gps_serial_t* serial);
 bool gps_serial_is_open(const gps_serial_t* serial);
 int gps_serial_read_data(gps_serial_t* serial, gps_data_t* gps_data);
+
+// Read GPS data and optionally add raw NMEA to console
+int gps_serial_read_data_with_console(gps_serial_t* serial, gps_data_t* gps_data, void* console_ptr);
+
 bool gps_serial_list_ports(char ports[][256], int max_ports, int* count);
 
 // Send command to GPS device

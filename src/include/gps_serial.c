@@ -2,6 +2,7 @@
 // Serial port implementation for GPS GUI
 //
 #include "gps_serial.h"
+#include "gps_console.h"
 #include "minmea.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -134,8 +135,13 @@ bool gps_serial_is_open(const gps_serial_t* serial) {
     return serial && serial->is_open;
 }
 
-static void process_nmea_sentence(const char* sentence, gps_data_t* gps_data) {
+static void process_nmea_sentence(const char* sentence, gps_data_t* gps_data, void* console_ptr) {
     if (!sentence || !gps_data) return;
+    
+    // Add raw NMEA sentence to console if console pointer is provided
+    if (console_ptr) {
+        console_add_line((console_t*)console_ptr, sentence);
+    }
     
     // Log raw sentence if logging is enabled
     if (gps_data->logging_enabled && gps_data->log_file) {
@@ -181,6 +187,10 @@ static void process_nmea_sentence(const char* sentence, gps_data_t* gps_data) {
 }
 
 int gps_serial_read_data(gps_serial_t* serial, gps_data_t* gps_data) {
+    return gps_serial_read_data_with_console(serial, gps_data, NULL);
+}
+
+int gps_serial_read_data_with_console(gps_serial_t* serial, gps_data_t* gps_data, void* console_ptr) {
     if (!serial || !gps_data || !serial->is_open) return -1;
     
     ssize_t bytes_read = read(serial->fd, serial->buffer + serial->buffer_pos, 
@@ -213,7 +223,7 @@ int gps_serial_read_data(gps_serial_t* serial, gps_data_t* gps_data) {
         
         // Process the line if it looks like NMEA
         if (strlen(line_start) > 0 && line_start[0] == '$') {
-            process_nmea_sentence(line_start, gps_data);
+            process_nmea_sentence(line_start, gps_data, console_ptr);
             processed_lines++;
         }
         

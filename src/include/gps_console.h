@@ -16,6 +16,7 @@ typedef struct {
     char command_input[CONSOLE_LINE_LENGTH];               // Command input buffer
     bool auto_scroll;                                      // Auto-scroll to newest data
     int total_lines;                                       // Total lines received (for stats)
+    bool new_data;                                         // Flag for new data since last render
 } console_t;
 
 // Initialize console system
@@ -30,7 +31,7 @@ void console_add_line(console_t* console, const char* line);
 // Clear all console buffer
 void console_clear(console_t* console);
 
-// Get a specific line from the buffer (0 = oldest, 4 = newest)
+// Get a specific line from the buffer (0 = newest, 4 = oldest)
 const char* console_get_line(const console_t* console, int line_index);
 
 // Set command input text
@@ -41,5 +42,11 @@ const char* console_get_command(const console_t* console);
 
 // Clear command input
 void console_clear_command(console_t* console);
+
+// Check if there's new data since last render
+bool console_has_new_data(const console_t* console);
+
+// Mark new data as consumed (called after rendering)
+void console_mark_data_consumed(console_t* console);
 
 #endif // GPS_CONSOLE_H

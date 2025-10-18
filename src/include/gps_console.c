@@ -17,6 +17,7 @@ bool console_init(console_t* console) {
     console->command_input[0] = '\0';
     console->auto_scroll = true;
     console->total_lines = 0;
+    console->new_data = false;
     
     return true;
 }
@@ -36,6 +37,7 @@ void console_add_line(console_t* console, const char* line) {
     // Move to next position
     console->current_index = (console->current_index + 1) % CONSOLE_MAX_LINES;
     console->total_lines++;
+    console->new_data = true;  // Mark that we have new data
 }
 
 void console_clear(console_t* console) {
@@ -47,6 +49,7 @@ void console_clear(console_t* console) {
     
     console->current_index = 0;
     console->total_lines = 0;
+    console->new_data = false;
 }
 
 const char* console_get_line(const console_t* console, int line_index) {
@@ -55,8 +58,8 @@ const char* console_get_line(const console_t* console, int line_index) {
     }
     
     // Calculate actual buffer index for this line position
-    // line_index 0 = oldest, 4 = newest
-    int buffer_index = (console->current_index + line_index) % CONSOLE_MAX_LINES;
+    // line_index 0 = newest, 4 = oldest (reverse chronological order)
+    int buffer_index = (console->current_index - 1 - line_index + CONSOLE_MAX_LINES) % CONSOLE_MAX_LINES;
     
     // Return empty string if line is empty
     if (console->buffer[buffer_index][0] == '\0') {
@@ -81,4 +84,14 @@ const char* console_get_command(const console_t* console) {
 void console_clear_command(console_t* console) {
     if (!console) return;
     console->command_input[0] = '\0';
+}
+
+bool console_has_new_data(const console_t* console) {
+    if (!console) return false;
+    return console->new_data;
+}
+
+void console_mark_data_consumed(console_t* console) {
+    if (!console) return;
+    console->new_data = false;
 }
