@@ -89,6 +89,7 @@ GUI uygulamasını başlatmak için:
 - **Digital Compass**: GPS yön bilgisi ile otomatik pusula ve magnetic declination
 - **Raw Data Console**: NMEA komut gönderme ve ham veri izleme
 - **Connection Dialog**: GPS cihaz seçimi, baud rate ayarlama ve auto-connect
+- **Data Management**: Organize dosya sistemi ile data/ klasöründe veri saklama
 - **Veri Kayıt**: GPS verilerinin dosyaya kaydedilmesi
 - **Tab-based Interface**: Telemetry, Map, Satellites, Sky Plot, Compass, Raw Data sekmeleri
 - **Çoklu Format Desteği**: Ham NMEA ve işlenmiş veri görüntüleme
@@ -314,6 +315,14 @@ src/include/
 ├── gps_compass.h/c     # Digital compass & direction
 ├── gps_console.h/c     # Raw NMEA data console
 └── minmea.h/c          # NMEA parsing library
+```
+
+### Data Directory Structure
+```
+data/
+├── gps_log_YYYYMMDD_HHMMSS.nmea  # NMEA log files
+├── gps_track.gpx                  # GPX track exports
+└── gps_log.txt                    # Legacy log file
 ```
 
 ### Component Sorumluluları
