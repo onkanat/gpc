@@ -138,13 +138,23 @@ Desteklenen NMEA 0183 mesaj türleri:
 - **ZDA**: Zaman ve tarih
 
 ## 9) Planlanan Özellikler
-Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasındaki notlara dikkat ediniz.bu notlar gui uygulamasının geliştirme sürecini yansıtmaktadır.
+Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasındaki tasarım notlarına dikkat edilmiştir. Temel özellikler tamamlanmıştır:
 
-### Kısa Vadeli
-- [ ] GPS port otomatik tespit
-- [ ] Gerçek zamanlı harita görünümü
-- [ ] Sinyal gücü çubuk grafikleri
-- [ ] Basit GPX export
+### ✅ Tamamlanan Özellikler
+- [x] GPS port otomatik tespit
+- [x] Gerçek zamanlı GPS veri görüntüleme (Telemetry panel)
+- [x] Sinyal kalitesi ve uydu bilgileri (Satellite panel)
+- [x] Modern GUI arayüzü (Dear ImGui tabanlı)
+- [x] NMEA veri logging sistemi
+- [x] Renk kodlu uydu sinyal gösterimi
+- [x] Real-time harita pozisyon görünümü (basit)
+- [x] Durum çubuğu ve bağlantı yönetimi
+
+### 🔄 Kısa Vadeli (Geliştirme Aşamasında)
+- [ ] Gelişmiş harita görünümü (zoom, pan)
+- [ ] Track çizgisi ve geçmiş rota gösterimi
+- [ ] GPX export işlevselliği
+- [ ] Uydu pozisyon diyagramı (polar view)
 
 ### Orta Vadeli
 - [ ] Waypoint işaretleme ve yönetimi
