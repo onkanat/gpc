@@ -32,7 +32,7 @@ all: gps_gui
 
 gps_gui:
 	g++ -Wall -Wextra -std=c++11 -I src/cimgui -I src/cimgui/imgui -I src/cimgui/imgui/backends -I src/include \
-	src/gps_gui.c src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c src/include/gps_map.c src/include/gps_polar.c \
+	src/gps_gui.c src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c src/include/gps_map.c src/include/gps_polar.c src/include/gps_compass.c src/include/gps_console.c \
 	src/cimgui/cimgui.cpp src/cimgui/cimgui_impl.cpp \
 	src/cimgui/imgui/imgui.cpp src/cimgui/imgui/imgui_draw.cpp \
 	src/cimgui/imgui/imgui_tables.cpp src/cimgui/imgui/imgui_widgets.cpp \

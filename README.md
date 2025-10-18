@@ -15,6 +15,7 @@ USB porttan bağlanan GPS cihazlarının verilerinin görüntülenmesi ve takibi
 - **NMEA Parser**: Güvenilir minmea tabanlı GPS veri ayrıştırma motoru
 - **Grafik Arayüz**: Dear ImGui tabanlı kullanıcı dostu kontrol paneli
 - **Veri Kayıt Sistemi**: Ham NMEA verileri ve işlenmiş GPS bilgilerinin kaydı
+- **Modüler Mimari**: Compass, Console, Map, Polar view ayrı modüller halinde
 
 ## 3) Gereksinimler
 
@@ -85,8 +86,9 @@ GUI uygulamasını başlatmak için:
 - **Track Kayıt Sistemi**: GPS rotanızı kaydedin ve GPX formatında export edin
 - **Sky Plot**: Uyduların gök kubbesindeki konumunu polar koordinat sisteminde görün
 - **Veri Kayıt**: GPS verilerinin dosyaya kaydedilmesi
-- **Tab-based Interface**: Telemetry, Map, Satellites, Sky Plot sekmeleri
+- **Tab-based Interface**: Telemetry, Map, Satellites, Sky Plot, Compass, Raw Data sekmeleri
 - **Çoklu Format Desteği**: Ham NMEA ve işlenmiş veri görüntüleme
+- **Modüler Mimari**: Her component ayrı modül olarak geliştirilmiş
 
 ### Yeni Özellikler (v2.0)
 
@@ -116,6 +118,72 @@ GUI uygulamasını başlatmak için:
 - **Interactive**: Uydu seçme ve detay görüntüleme
 - **Fix Indicator**: Pozisyon hesaplamasında kullanılan uydular
 - **Compass Labels**: Kuzey, Doğu, Güney, Batı işaretleri
+
+#### 🧭 **Compass & Direction (Pusula Sistemi)**
+- **Digital Compass**: Dairesel pusula tasarımı polar view benzeri
+- **GPS Heading**: Gerçek zamanlı yön göstergesi
+- **Magnetic Declination**: Manuel manyetik sapma ayarı
+- **Auto-rotate**: GPS course ile otomatik pusula dönüşü
+- **Cardinal Directions**: N, NE, E, SE, S, SW, W, NW işaretleri
+- **Speed & Course Display**: Anlık hız ve yön bilgileri
+
+#### 📡 **Raw Data Console (Ham Veri Konsolu)**
+- **NMEA Monitor**: Son 5 NMEA cümlesinin real-time görüntülenmesi
+- **Color Coding**: Mesaj tipine göre renk kodlaması (RMC, GGA, GSV, vb.)
+- **Command Interface**: GPS cihazına direkt komut gönderme
+- **MTK Support**: MediaTek GPS çipleri için özel komutlar
+- **Auto-scroll**: Otomatik kaydırma ile sürekli veri akışı
+- **Configuration**: Update rate, sentence types, restart komutları
+
+### 🔧 **v3.0 Güncellemeleri - Modüler Refactoring**
+
+#### **Separation of Concerns Implementation**
+- **Modüler Mimari**: Her component artık ayrı dosyada ve kendi sorumluluğuna odaklanıyor
+- **Code Organization**: 1375 satır → ~1100 satır (%20 kod azalması)
+- **Maintainability**: Bug fixing ve feature additions artık çok daha kolay
+
+#### **Yeni Modüller**
+```
+📁 src/include/
+├── 🆕 gps_compass.h/c    # Digital compass logic & calculations
+├── 🆕 gps_console.h/c    # Raw NMEA data management & buffering
+├── 🔧 gps_serial.h/c     # Enhanced with command sending capability
+├── 📊 gps_data.h/c       # GPS data structures & parsing (unchanged)
+├── 🗺️ gps_map.h/c        # Map system & tracking (unchanged)
+└── 🛰️ gps_polar.h/c     # Satellite sky plot (unchanged)
+```
+
+#### **GPS Serial Enhancement**
+- **Real Command Sending**: `gps_serial_send_command()` ile gerçek GPS cihaz kontrolü
+- **MTK Protocol Support**: MediaTek GPS modülleri için tam komut desteği
+- **Error Handling**: Komut gönderme hatalarının yakalanması ve raporlanması
+- **Termination Handling**: NMEA komutlarına otomatik `\r\n` ekleme
+
+#### **Compass Module Features**
+```c
+typedef struct {
+    float heading;           // Current heading (0-360°)
+    float declination;       // Magnetic declination (-180° to +180°)
+    bool auto_rotate;        // Auto-rotate with GPS course
+} compass_t;
+```
+- **True Heading Calculation**: GPS heading + magnetic declination
+- **Auto-update**: GPS motion data ile otomatik pusula güncelleme
+- **Manual Declination**: Kullanıcı tarafından ayarlanabilir magnetic declination
+- **Future-ready**: WMM (World Magnetic Model) implementation'ı için hazır
+
+#### **Console Module Features**
+```c
+typedef struct {
+    char buffer[5][256];     // Circular buffer for NMEA lines
+    int current_index;       // Current write position
+    bool auto_scroll;        // Auto-scroll behavior
+} console_t;
+```
+- **Circular Buffer**: Efficient memory usage ile son 5 NMEA cümlesini saklar
+- **Color-coded Display**: NMEA sentence type'a göre renk kodlaması
+- **Command History**: Gönderilen komutların console'da görüntülenmesi
+- **Thread-safe Design**: Future multi-threading için hazır yapı
 
 ### Kontroller
 
@@ -170,7 +238,36 @@ Desteklenen NMEA 0183 mesaj türleri:
 - **VTG**: İz üzerinde yapılan hız ve kurs
 - **ZDA**: Zaman ve tarih
 
-## 9) Planlanan Özellikler
+### GPS Komut Desteği
+- **MediaTek (MTK) Commands**: PMTK protokolü ile GPS cihaz konfigürasyonu
+- **Firmware Query**: Cihaz versiyonu sorgulama
+- **Update Rate Control**: NMEA mesaj sıklığı ayarlama
+- **Sentence Filtering**: Sadece gerekli NMEA mesajlarını alma
+- **Cold/Warm/Hot Restart**: GPS receiver yeniden başlatma
+
+## 9) Kod Mimarisi
+
+### Modüler Yapı
+```
+src/include/
+├── gps_data.h/c        # GPS data structures & parsing
+├── gps_serial.h/c      # Serial communication + command sending  
+├── gps_map.h/c         # Map system & tracking
+├── gps_polar.h/c       # Satellite sky plot
+├── gps_compass.h/c     # Digital compass & direction
+├── gps_console.h/c     # Raw NMEA data console
+└── minmea.h/c          # NMEA parsing library
+```
+
+### Component Sorumluluları
+- **GPS GUI** (`gps_gui.c`): UI rendering ve event handling
+- **GPS Serial** (`gps_serial.c`): Serial communication ve GPS command interface
+- **GPS Compass** (`gps_compass.c`): Digital compass logic ve direction calculations
+- **GPS Console** (`gps_console.c`): Raw NMEA data management ve command interface
+- **GPS Map** (`gps_map.c`): Interactive map rendering ve track management
+- **GPS Polar** (`gps_polar.c`): Satellite sky plot ve polar coordinate display
+
+## 10) Planlanan Özellikler
 Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasındaki tasarım notlarına dikkat edilmiştir. Temel özellikler tamamlanmıştır:
 
 ### ✅ Tamamlanan Özellikler
@@ -188,12 +285,17 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 - [x] **Uydu Sky Plot** - polar koordinat sistemi ✅
 - [x] **Tab-based arayüz** (Telemetry/Map/Satellites/Sky Plot) ✅
 - [x] **Interactive controls** - zoom, pan, track recording ✅
+- [x] **Pusula ve yön göstergesi** - dairesel pusula tasarımı ile GPS heading ✅
+- [x] **GPS cihaz konfigürasyonu ve raw veri konsolu** - NMEA komut gönderme ve ham veri izleme ✅
 
 ### 🔄 Kısa Vadeli (Geliştirme Aşamasında)
 - [x] Gelişmiş harita görünümü (zoom, pan) ✅
 - [x] Track çizgisi ve geçmiş rota gösterimi ✅
 - [x] GPX export işlevselliği ✅
 - [x] Uydu pozisyon diyagramı (polar view) ✅
+- [x] Pusula ve yön göstergesici(tasarım polar view ile benzer olmalı dairesel ve pusula şeklinde) ilave TAB compass ✅
+- [x] GPS cihaz konfigürasyon seçenekleri ve ham veri izleme konsolu max beş satır görüntüleme ayrıca en altta seri cihaza komut gönderme.ilave TAB raw data ✅
+- [ ] Kullanıcı arayüzü iyileştirmeleri ve kontroller
 
 ### Orta Vadeli (Sıradaki Geliştirmeler)
 - [ ] Gelişmiş waypoint yönetimi ve navigation
@@ -209,7 +311,7 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 - [ ] Plugin mimarisi
 - [ ] Multi-language desteği
 
-## 10) Katkı Süreci
+## 11) Katkı Süreci
 
 1. Fork yapın ve yeni branch oluşturun: `git checkout -b feature/yeni-ozellik`
 2. Değişikliklerinizi commit edin: `git commit -am 'Yeni özellik: açıklama'`
@@ -218,15 +320,17 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 
 ### Kod Standartları
 - C99/C++11 standartlarına uyum
+- Modüler mimari: Her component ayrı dosyada
 - Açıklayıcı değişken isimleri
 - Fonksiyon başına maksimum 50 satır
 - Her commit bir özellik veya düzeltme
+- Header files için include guards
 
-## 11) Lisans
+## 12) Lisans
 
 Bu proje şu an için lisans belirtilmemiştir. Üretime geçmeden önce uygun bir açık kaynak lisansı (MIT, GPL v3 gibi) eklenmesi planlanmaktadır.
 
-## 12) İletişim ve Destek
+## 13) İletişim ve Destek
 
 - Issues için GitHub issue tracker kullanın
 - Geliştirme soruları için Pull Request tartışmaları

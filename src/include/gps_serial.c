@@ -269,3 +269,41 @@ bool gps_serial_list_ports(char ports[][256], int max_ports, int* count) {
     
     return *count > 0;
 }
+
+bool gps_serial_send_command(gps_serial_t* serial, const char* command) {
+    if (!serial || !command || !serial->is_open) {
+        return false;
+    }
+    
+    size_t command_len = strlen(command);
+    if (command_len == 0) {
+        return false;
+    }
+    
+    // Send command to GPS device
+    ssize_t bytes_written = write(serial->fd, command, command_len);
+    if (bytes_written < 0) {
+        fprintf(stderr, "Failed to send GPS command: %s\n", strerror(errno));
+        return false;
+    }
+    
+    // If command doesn't end with \r\n, add it
+    if (command_len < 2 || 
+        command[command_len-2] != '\r' || 
+        command[command_len-1] != '\n') {
+        bytes_written = write(serial->fd, "\r\n", 2);
+        if (bytes_written < 0) {
+            fprintf(stderr, "Failed to send command terminator: %s\n", strerror(errno));
+            return false;
+        }
+    }
+    
+    // Flush the output
+    if (tcdrain(serial->fd) != 0) {
+        fprintf(stderr, "Failed to flush GPS command: %s\n", strerror(errno));
+        return false;
+    }
+    
+    printf("GPS command sent: %s\n", command);
+    return true;
+}

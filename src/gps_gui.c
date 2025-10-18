@@ -28,6 +28,8 @@
 #include "include/gps_serial.h"
 #include "include/gps_map.h"
 #include "include/gps_polar.h"
+#include "include/gps_compass.h"
+#include "include/gps_console.h"
 
 // GUI Configuration
 #define WINDOW_WIDTH 1024
@@ -41,13 +43,15 @@ typedef struct {
     gps_serial_t gps_serial;
     map_system_t map_system;
     polar_view_t polar_view;
+    compass_t compass;
+    console_t console;
     bool show_demo_window;
     bool auto_scroll_log;
     char connection_status_text[256];
     char last_error[512];
     
     // UI state
-    int active_tab;              // 0=Telemetry, 1=Map, 2=Satellites, 3=Polar
+    int active_tab;              // 0=Telemetry, 1=Map, 2=Satellites, 3=Polar, 4=Compass, 5=Raw Data
     bool show_gpx_export_dialog;
     char gpx_filename[256];
     bool gpx_export_success;
@@ -56,10 +60,18 @@ typedef struct {
 
 // Function declarations
 void render_header_bar(app_state_t* app);
+void render_telemetry_window(app_state_t* app);
 void render_telemetry_panel(app_state_t* app);
+void render_map_window(app_state_t* app);
 void render_enhanced_map_panel(app_state_t* app);
+void render_satellite_window(app_state_t* app);
 void render_satellite_panel(app_state_t* app);
+void render_polar_window(app_state_t* app);
 void render_polar_view_panel(app_state_t* app);
+void render_compass_window(app_state_t* app);
+void render_compass_panel(app_state_t* app);
+void render_raw_data_window(app_state_t* app);
+void render_raw_data_panel(app_state_t* app);
 void render_status_bar(app_state_t* app);
 void render_connection_dialog(app_state_t* app);
 void render_gpx_export_dialog(app_state_t* app);
@@ -128,6 +140,8 @@ int main(int argc, char** argv) {
     gps_serial_init(&app_state.gps_serial);
     map_system_init(&app_state.map_system);
     polar_view_init(&app_state.polar_view);
+    compass_init(&app_state.compass);
+    console_init(&app_state.console);
     app_state.show_demo_window = false;
     app_state.auto_scroll_log = true;
     app_state.active_tab = 0;
@@ -152,6 +166,7 @@ int main(int argc, char** argv) {
 
         // Update GPS data
         update_gps_data(&app_state);
+        compass_update(&app_state.compass, &app_state.gps_data);
 
         cImGui_ImplOpenGL3_NewFrame();
         cImGui_ImplSDL2_NewFrame();
@@ -176,38 +191,20 @@ int main(int argc, char** argv) {
         igBegin("DockSpace Demo", &open, window_flags);
         igPopStyleVar(3);
 
+        // Render header/menu bar
+        render_header_bar(&app_state);
+
         // Submit the DockSpace
         ImGuiID dockspace_id = igGetID_Str("MyDockSpace");
         igDockSpace(dockspace_id, (ImVec2){0.0f, 0.0f}, ImGuiDockNodeFlags_None, NULL);
 
-        // Render components based on active tab
-        if (igBeginTabBar("MainTabs", ImGuiTabBarFlags_None)) {
-            if (igBeginTabItem("Telemetry", NULL, ImGuiTabItemFlags_None)) {
-                app_state.active_tab = 0;
-                render_telemetry_panel(&app_state);
-                igEndTabItem();
-            }
-            
-            if (igBeginTabItem("Map", NULL, ImGuiTabItemFlags_None)) {
-                app_state.active_tab = 1;
-                render_enhanced_map_panel(&app_state);
-                igEndTabItem();
-            }
-            
-            if (igBeginTabItem("Satellites", NULL, ImGuiTabItemFlags_None)) {
-                app_state.active_tab = 2;
-                render_satellite_panel(&app_state);
-                igEndTabItem();
-            }
-            
-            if (igBeginTabItem("Sky Plot", NULL, ImGuiTabItemFlags_None)) {
-                app_state.active_tab = 3;
-                render_polar_view_panel(&app_state);
-                igEndTabItem();
-            }
-            
-            igEndTabBar();
-        }
+        // Render individual panels as separate dockable windows
+        render_telemetry_window(&app_state);
+        render_map_window(&app_state);
+        render_satellite_window(&app_state);
+        render_polar_window(&app_state);
+        render_compass_window(&app_state);
+        render_raw_data_window(&app_state);
 
         render_status_bar(&app_state);
         render_connection_dialog(&app_state);
@@ -233,6 +230,8 @@ int main(int argc, char** argv) {
     gps_serial_cleanup(&app_state.gps_serial);
     map_system_cleanup(&app_state.map_system);
     polar_view_cleanup(&app_state.polar_view);
+    compass_cleanup(&app_state.compass);
+    console_cleanup(&app_state.console);
 
     cImGui_ImplOpenGL3_Shutdown();
     cImGui_ImplSDL2_Shutdown();
@@ -342,11 +341,19 @@ void render_header_bar(app_state_t* app) {
     }
 }
 
-void render_telemetry_panel(app_state_t* app) {
-    igSetNextWindowSize((ImVec2){LEFT_PANEL_WIDTH, -1}, ImGuiCond_FirstUseEver);
+void render_telemetry_window(app_state_t* app) {
+    // Set default size and position for first use
+    igSetNextWindowSize((ImVec2){LEFT_PANEL_WIDTH, 400}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){10, 30}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
     
     if (igBegin("Telemetry", NULL, ImGuiWindowFlags_None)) {
-        gps_data_t* gps = &app->gps_data;
+        render_telemetry_panel(app);
+    }
+    igEnd();
+}
+
+void render_telemetry_panel(app_state_t* app) {
+    gps_data_t* gps = &app->gps_data;
         
         // Connection status
         igText("Status: %s", gps_status_to_string(gps->status));
@@ -422,14 +429,22 @@ void render_telemetry_panel(app_state_t* app) {
         if (gps->logging_enabled) {
             igText("File: %s", gps->log_filename);
         }
+}
+
+void render_map_window(app_state_t* app) {
+    // Set default size and position for main map window
+    igSetNextWindowSize((ImVec2){600, 400}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){LEFT_PANEL_WIDTH + 20, 30}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    
+    if (igBegin("Map", NULL, ImGuiWindowFlags_None)) {
+        render_enhanced_map_panel(app);
     }
     igEnd();
 }
 
 void render_enhanced_map_panel(app_state_t* app) {
-    if (igBegin("Enhanced Map", NULL, ImGuiWindowFlags_None)) {
-        gps_data_t* gps = &app->gps_data;
-        map_system_t* map = &app->map_system;
+    gps_data_t* gps = &app->gps_data;
+    map_system_t* map = &app->map_system;
         
         // Map controls
         igText("Map Controls:");
@@ -639,14 +654,22 @@ void render_enhanced_map_panel(app_state_t* app) {
             map_system_set_center(map, map->view.center_lat + lat_delta, 
                                      map->view.center_lon + lon_delta);
         }
+}
+
+void render_polar_window(app_state_t* app) {
+    // Set default size for sky plot window
+    igSetNextWindowSize((ImVec2){350, 350}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){LEFT_PANEL_WIDTH + 630, 30}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    
+    if (igBegin("Sky Plot", NULL, ImGuiWindowFlags_None)) {
+        render_polar_view_panel(app);
     }
     igEnd();
 }
 
 void render_polar_view_panel(app_state_t* app) {
-    if (igBegin("Sky Plot", NULL, ImGuiWindowFlags_None)) {
-        polar_view_t* polar = &app->polar_view;
-        gps_data_t* gps = &app->gps_data;
+    polar_view_t* polar = &app->polar_view;
+    gps_data_t* gps = &app->gps_data;
         
         // Update polar view with current GPS data
         polar_view_update(polar, gps);
@@ -815,8 +838,294 @@ void render_polar_view_panel(app_state_t* app) {
         
         // Reserve space for the canvas
         igInvisibleButton("polar_canvas", (ImVec2){size, size}, ImGuiButtonFlags_None);
+}
+
+void render_compass_window(app_state_t* app) {
+    // Set default size for compass window
+    igSetNextWindowSize((ImVec2){350, 400}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){LEFT_PANEL_WIDTH + 320, 450}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    
+    if (igBegin("Compass", NULL, ImGuiWindowFlags_None)) {
+        render_compass_panel(app);
     }
     igEnd();
+}
+
+void render_compass_panel(app_state_t* app) {
+    gps_data_t* gps = &app->gps_data;
+    compass_t* compass = &app->compass;
+    
+    // Controls
+    igText("Compass & Direction");
+    igSeparator();
+    
+    igCheckbox("Auto-rotate with GPS", &compass->auto_rotate);
+    float declination = compass->declination;
+    if (igSliderFloat("Magnetic Declination", &declination, -30.0f, 30.0f, "%.1f°", ImGuiSliderFlags_None)) {
+        compass_set_declination(compass, declination);
+    }
+    
+    // Current heading display
+    float current_heading = compass->heading;
+    if (compass->auto_rotate && gps->motion_valid) {
+        current_heading = gps->course;
+    }
+    
+    igText("Current Heading: %.1f°", current_heading);
+    igText("Magnetic Declination: %.1f°", compass->declination);
+    igText("True Heading: %.1f°", compass_get_true_heading(compass));
+    
+    igSeparator();
+    
+    // Compass canvas
+    ImVec2 canvas_pos, canvas_size;
+    igGetCursorScreenPos(&canvas_pos);
+    igGetContentRegionAvail(&canvas_size);
+    
+    // Make it square
+    float size = fminf(canvas_size.x, canvas_size.y) - 20.0f;
+    if (size < 200.0f) size = 200.0f;
+    
+    float center_x = canvas_pos.x + size * 0.5f;
+    float center_y = canvas_pos.y + size * 0.5f;
+    float radius = size * 0.45f;
+    
+    ImDrawList* draw_list = igGetWindowDrawList();
+    
+    // Background circle
+    ImU32 bg_color = igGetColorU32_Col(ImGuiCol_ChildBg, 1.0f);
+    ImDrawList_AddCircleFilled(draw_list, (ImVec2){center_x, center_y}, radius, bg_color, 64);
+    
+    // Outer ring
+    ImU32 ring_color = igGetColorU32_Col(ImGuiCol_Border, 1.0f);
+    ImDrawList_AddCircle(draw_list, (ImVec2){center_x, center_y}, radius, ring_color, 64, 3.0f);
+    
+    // Inner rings for reference
+    ImU32 grid_color = igGetColorU32_Vec4((ImVec4){0.4f, 0.4f, 0.4f, 0.4f});
+    ImDrawList_AddCircle(draw_list, (ImVec2){center_x, center_y}, radius * 0.7f, grid_color, 32, 1.0f);
+    ImDrawList_AddCircle(draw_list, (ImVec2){center_x, center_y}, radius * 0.4f, grid_color, 32, 1.0f);
+    
+    // Cardinal direction lines
+    for (int angle = 0; angle < 360; angle += 30) {
+        float line_thickness = (angle % 90 == 0) ? 2.0f : 1.0f;
+        ImU32 line_color = (angle % 90 == 0) ? 
+            igGetColorU32_Vec4((ImVec4){0.8f, 0.8f, 0.8f, 1.0f}) : grid_color;
+        
+        float angle_rad = (angle - 90.0f) * M_PI / 180.0f;
+        float start_r = (angle % 90 == 0) ? radius * 0.85f : radius * 0.9f;
+        
+        float start_x = center_x + start_r * cosf(angle_rad);
+        float start_y = center_y + start_r * sinf(angle_rad);
+        float end_x = center_x + radius * cosf(angle_rad);
+        float end_y = center_y + radius * sinf(angle_rad);
+        
+        ImDrawList_AddLine(draw_list, (ImVec2){start_x, start_y}, 
+                          (ImVec2){end_x, end_y}, line_color, line_thickness);
+    }
+    
+    // Cardinal direction labels
+    ImU32 text_color = igGetColorU32_Col(ImGuiCol_Text, 1.0f);
+    float label_radius = radius + 15.0f;
+    
+    const char* compass_labels[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    for (int i = 0; i < 8; i++) {
+        float angle_rad = (i * 45.0f - 90.0f) * M_PI / 180.0f;
+        float label_x = center_x + label_radius * cosf(angle_rad) - 8.0f;
+        float label_y = center_y + label_radius * sinf(angle_rad) - 8.0f;
+        
+        // Highlight N, E, S, W
+        ImU32 label_color = (i % 2 == 0) ? 
+            igGetColorU32_Vec4((ImVec4){1.0f, 1.0f, 0.0f, 1.0f}) : text_color;
+        
+        ImDrawList_AddText_Vec2(draw_list, (ImVec2){label_x, label_y}, 
+                               label_color, compass_labels[i], NULL);
+    }
+    
+    // Heading arrow (North indicator)
+    float heading_rad = (current_heading - 90.0f) * M_PI / 180.0f;
+    float arrow_length = radius * 0.8f;
+    
+    // Main arrow
+    float arrow_end_x = center_x + arrow_length * cosf(heading_rad);
+    float arrow_end_y = center_y + arrow_length * sinf(heading_rad);
+    
+    ImU32 arrow_color = igGetColorU32_Vec4((ImVec4){1.0f, 0.0f, 0.0f, 1.0f}); // Red
+    ImDrawList_AddLine(draw_list, (ImVec2){center_x, center_y}, 
+                      (ImVec2){arrow_end_x, arrow_end_y}, arrow_color, 4.0f);
+    
+    // Arrow head
+    float arrow_angle1 = heading_rad + (150.0f * M_PI / 180.0f);
+    float arrow_angle2 = heading_rad - (150.0f * M_PI / 180.0f);
+    float head_length = 20.0f;
+    
+    float head1_x = arrow_end_x + head_length * cosf(arrow_angle1);
+    float head1_y = arrow_end_y + head_length * sinf(arrow_angle1);
+    float head2_x = arrow_end_x + head_length * cosf(arrow_angle2);
+    float head2_y = arrow_end_y + head_length * sinf(arrow_angle2);
+    
+    ImDrawList_AddLine(draw_list, (ImVec2){arrow_end_x, arrow_end_y}, 
+                      (ImVec2){head1_x, head1_y}, arrow_color, 3.0f);
+    ImDrawList_AddLine(draw_list, (ImVec2){arrow_end_x, arrow_end_y}, 
+                      (ImVec2){head2_x, head2_y}, arrow_color, 3.0f);
+    
+    // Center dot
+    ImU32 center_color = igGetColorU32_Vec4((ImVec4){1.0f, 1.0f, 1.0f, 1.0f});
+    ImDrawList_AddCircleFilled(draw_list, (ImVec2){center_x, center_y}, 5.0f, center_color, 16);
+    
+    // Speed and course info overlay
+    if (gps->motion_valid) {
+        char info_text[128];
+        snprintf(info_text, sizeof(info_text), "Speed: %.1f km/h", gps->speed_kmh);
+        ImDrawList_AddText_Vec2(draw_list, 
+                               (ImVec2){canvas_pos.x + 10, canvas_pos.y + 10}, 
+                               text_color, info_text, NULL);
+        
+        snprintf(info_text, sizeof(info_text), "Course: %.1f°", gps->course);
+        ImDrawList_AddText_Vec2(draw_list, 
+                               (ImVec2){canvas_pos.x + 10, canvas_pos.y + 30}, 
+                               text_color, info_text, NULL);
+    }
+    
+    // Reserve space for the canvas
+    igInvisibleButton("compass_canvas", (ImVec2){size, size}, ImGuiButtonFlags_None);
+}
+
+void render_raw_data_window(app_state_t* app) {
+    // Set default size for raw data window
+    igSetNextWindowSize((ImVec2){600, 300}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){LEFT_PANEL_WIDTH + 20, 450}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    
+    if (igBegin("Raw Data Console", NULL, ImGuiWindowFlags_None)) {
+        render_raw_data_panel(app);
+    }
+    igEnd();
+}
+
+void render_raw_data_panel(app_state_t* app) {
+    gps_data_t* gps = &app->gps_data;
+    console_t* console = &app->console;
+    
+    igText("GPS Device Configuration & Raw Data Monitor");
+    igSeparator();
+    
+    // Connection info
+    igText("Port: %s", gps->port_name);
+    igSameLine(0, 20);
+    igText("Baud: %d", gps->baud_rate);
+    igSameLine(0, 20);
+    igText("Status: %s", gps_status_to_string(gps->status));
+    
+    igSeparator();
+    
+    // Controls
+    igCheckbox("Auto-scroll console", &console->auto_scroll);
+    igSameLine(0, 20);
+    
+    if (igButton("Clear Console", (ImVec2){0, 0})) {
+        console_clear(console);
+    }
+    
+    igSameLine(0, 20);
+    if (igButton("Request Version", (ImVec2){0, 0})) {
+        if (gps_serial_send_command(&app->gps_serial, "$PMTK605*31")) {
+            console_add_line(console, ">>> $PMTK605*31 (Request firmware version)");
+        } else {
+            console_add_line(console, "Error: Failed to send command");
+        }
+    }
+    
+    igSameLine(0, 20);
+    if (igButton("Reset Config", (ImVec2){0, 0})) {
+        if (gps_serial_send_command(&app->gps_serial, "$PMTK104*37")) {
+            console_add_line(console, ">>> $PMTK104*37 (Cold restart)");
+        } else {
+            console_add_line(console, "Error: Failed to send command");
+        }
+    }
+    
+    igSeparator();
+    
+    // Raw data console (5 lines max)
+    igText("Raw NMEA Data (Last 5 sentences):");
+    
+    ImGuiWindowFlags console_flags = ImGuiWindowFlags_HorizontalScrollbar;
+    igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){5.0f, 5.0f});
+    
+    if (igBeginChild_Str("RawConsole", (ImVec2){0, 120}, ImGuiChildFlags_Borders, console_flags)) {
+        // Remove font push since it's not supported in this CImGui version
+        
+        for (int i = 0; i < 5; i++) {
+            const char* line = console_get_line(console, i);
+            if (line) {
+                // Color code different NMEA sentence types
+                ImVec4 line_color = {0.8f, 0.8f, 0.8f, 1.0f}; // Default white
+                
+                if (strstr(line, "$GPRMC") || strstr(line, "$GNRMC")) {
+                    line_color = (ImVec4){0.0f, 1.0f, 0.0f, 1.0f}; // Green for RMC
+                } else if (strstr(line, "$GPGGA") || strstr(line, "$GNGGA")) {
+                    line_color = (ImVec4){0.0f, 0.8f, 1.0f, 1.0f}; // Cyan for GGA
+                } else if (strstr(line, "$GPGSV") || strstr(line, "$GNGSV")) {
+                    line_color = (ImVec4){1.0f, 0.8f, 0.0f, 1.0f}; // Orange for GSV
+                } else if (strstr(line, "$PMTK")) {
+                    line_color = (ImVec4){1.0f, 0.0f, 1.0f, 1.0f}; // Magenta for MTK responses
+                } else if (strstr(line, ">>>")) {
+                    line_color = (ImVec4){1.0f, 1.0f, 0.0f, 1.0f}; // Yellow for commands
+                }
+                
+                igTextColored(line_color, "%s", line);
+            }
+        }
+        
+        // Auto-scroll to bottom
+        if (console->auto_scroll) {
+            igSetScrollHereY(1.0f);
+        }
+    }
+    igEndChild();
+    igPopStyleVar(1);
+    
+    igSeparator();
+    
+    // Command input
+    igText("Send Command to GPS:");
+    igSetNextItemWidth(-100.0f);
+    
+    // Get mutable copy of command for input
+    char command_buffer[256];
+    strncpy(command_buffer, console_get_command(console), sizeof(command_buffer));
+    command_buffer[255] = '\0';
+    
+    bool enter_pressed = igInputText("##command", command_buffer, sizeof(command_buffer), 
+                                    ImGuiInputTextFlags_EnterReturnsTrue, NULL, NULL);
+    
+    // Update console command buffer
+    console_set_command(console, command_buffer);
+    
+    igSameLine(0, 5);
+    bool send_clicked = igButton("Send", (ImVec2){80, 0});
+    
+    if (enter_pressed || send_clicked) {
+        const char* cmd = console_get_command(console);
+        if (strlen(cmd) > 0) {
+            if (gps_serial_send_command(&app->gps_serial, cmd)) {
+                char cmd_line[300];
+                snprintf(cmd_line, sizeof(cmd_line), ">>> %s", cmd);
+                console_add_line(console, cmd_line);
+            } else {
+                console_add_line(console, "Error: Failed to send command");
+            }
+            console_clear_command(console);
+        }
+    }
+    
+    // Common GPS commands help
+    igSeparator();
+    igText("Common Commands:");
+    igBulletText("$PMTK605*31 - Query firmware version");
+    igBulletText("$PMTK104*37 - Cold restart");
+    igBulletText("$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28 - RMC+GGA only");
+    igBulletText("$PMTK314,-1*04 - Restore default NMEA sentences");
+    igBulletText("$PMTK220,1000*1F - Set update rate to 1Hz");
 }
 
 void render_gpx_export_dialog(app_state_t* app) {
@@ -874,9 +1183,19 @@ void render_gpx_export_dialog(app_state_t* app) {
     igEnd();
 }
 
-void render_satellite_panel(app_state_t* app) {
+void render_satellite_window(app_state_t* app) {
+    // Set default size for satellite window 
+    igSetNextWindowSize((ImVec2){300, 250}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){10, 450}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    
     if (igBegin("Satellites", NULL, ImGuiWindowFlags_None)) {
-        gps_data_t* gps = &app->gps_data;
+        render_satellite_panel(app);
+    }
+    igEnd();
+}
+
+void render_satellite_panel(app_state_t* app) {
+    gps_data_t* gps = &app->gps_data;
         
         igText("Visible: %d | Used: %d", gps->satellites_visible, gps->satellites_used);
         igSeparator();
@@ -926,8 +1245,6 @@ void render_satellite_panel(app_state_t* app) {
         } else {
             igTextColored((ImVec4){0.7f, 0.7f, 0.7f, 1.0f}, "No satellite data available");
         }
-    }
-    igEnd();
 }
 
 void render_status_bar(app_state_t* app) {
@@ -1010,6 +1327,14 @@ void update_gps_data(app_state_t* app) {
         } else if (processed > 0) {
             // Update map system with new GPS data
             map_system_update(&app->map_system, &app->gps_data);
+            
+            // Add raw NMEA data to console (simplified - we'd need actual raw line access)
+            if (app->gps_data.total_sentences > 0) {
+                char raw_line[256];
+                snprintf(raw_line, sizeof(raw_line), "NMEA sentence received (total: %lu)", 
+                        app->gps_data.total_sentences);
+                console_add_line(&app->console, raw_line);
+            }
         }
     }
 }

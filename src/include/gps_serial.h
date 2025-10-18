@@ -25,4 +25,7 @@ bool gps_serial_is_open(const gps_serial_t* serial);
 int gps_serial_read_data(gps_serial_t* serial, gps_data_t* gps_data);
 bool gps_serial_list_ports(char ports[][256], int max_ports, int* count);
 
+// Send command to GPS device
+bool gps_serial_send_command(gps_serial_t* serial, const char* command);
+
 #endif // GPS_SERIAL_H
