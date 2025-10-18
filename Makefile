@@ -19,7 +19,7 @@ CIMGUI_SOURCES = $(CIMGUI_DIR)/cimgui.cpp \
                  $(BACKEND_DIR)/imgui_impl_opengl3.cpp
 
 # C kaynakları
-GPS_SOURCES = src/gps_gui.c src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c
+GPS_SOURCES = src/gps_gui.c src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c src/include/gps_map.c src/include/gps_polar.c
 
 INCLUDES = -I $(CIMGUI_DIR) \
            -I $(IMGUI_DIR) \
@@ -32,7 +32,7 @@ all: gps_gui
 
 gps_gui:
 	g++ -Wall -Wextra -std=c++11 -I src/cimgui -I src/cimgui/imgui -I src/cimgui/imgui/backends -I src/include \
-	src/gps_gui.c src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c \
+	src/gps_gui.c src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c src/include/gps_map.c src/include/gps_polar.c \
 	src/cimgui/cimgui.cpp src/cimgui/cimgui_impl.cpp \
 	src/cimgui/imgui/imgui.cpp src/cimgui/imgui/imgui_draw.cpp \
 	src/cimgui/imgui/imgui_tables.cpp src/cimgui/imgui/imgui_widgets.cpp \

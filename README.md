@@ -81,8 +81,41 @@ GUI uygulamasını başlatmak için:
 - **Gerçek Zamanlı GPS Monitoring**: Konum, hız, yön bilgilerinin canlı takibi
 - **Sinyal Kalitesi Görüntüleme**: GPS sinyal gücü ve uydu sayısı monitörü
 - **Grafik Arayüz**: Dear ImGui tabanlı modern kontrol paneli
+- **Gelişmiş Harita Görünümü**: Zoom, pan, track görüntüleme ile interactive harita
+- **Track Kayıt Sistemi**: GPS rotanızı kaydedin ve GPX formatında export edin
+- **Sky Plot**: Uyduların gök kubbesindeki konumunu polar koordinat sisteminde görün
 - **Veri Kayıt**: GPS verilerinin dosyaya kaydedilmesi
+- **Tab-based Interface**: Telemetry, Map, Satellites, Sky Plot sekmeleri
 - **Çoklu Format Desteği**: Ham NMEA ve işlenmiş veri görüntüleme
+
+### Yeni Özellikler (v2.0)
+
+#### 🗺️ **Gelişmiş Harita Sistemi**
+- **Zoom Controls**: Mouse wheel ile zoom, butonlarla zoom in/out/reset
+- **Pan Destegi**: Orta fare tuşu ile harita kaydırma
+- **Track Görüntüleme**: GPS rotanızın real-time çizimi
+- **Auto-center**: GPS pozisyonunu otomatik takip
+- **Grid System**: Referans çizgileri ile konum belirleme
+
+#### 📊 **Track Yönetimi**
+- **Recording Controls**: Start/Stop track recording
+- **Track Statistics**: Mesafe, süre, maksimum hız bilgileri
+- **Visual Track**: Cyan renkte rota çizgisi
+- **Direction Arrow**: Hareket yönü göstergesi
+- **Fit to Track**: Tüm rotayı ekrana sığdır
+
+#### 💾 **GPX Export**
+- **Standard GPX**: Industry standard GPX 1.1 format
+- **Track Points**: Timestamp, elevation, coordinates
+- **Waypoints**: Future expansion için hazır
+- **Metadata**: Track bilgileri ve oluşturma zamanı
+
+#### 🛰️ **Sky Plot (Uydu Diyagramı)**
+- **Polar View**: Uyduların gök kubbesindeki gerçek konumları
+- **SNR Color Coding**: Sinyal gücüne göre renk kodlaması
+- **Interactive**: Uydu seçme ve detay görüntüleme
+- **Fix Indicator**: Pozisyon hesaplamasında kullanılan uydular
+- **Compass Labels**: Kuzey, Doğu, Güney, Batı işaretleri
 
 ### Kontroller
 
@@ -149,18 +182,26 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 - [x] Renk kodlu uydu sinyal gösterimi
 - [x] Real-time harita pozisyon görünümü (basit)
 - [x] Durum çubuğu ve bağlantı yönetimi
+- [x] **Gelişmiş harita görünümü** (zoom, pan, mouse wheel) ✅
+- [x] **Track kayıt sistemi** ve geçmiş rota görüntüleme ✅
+- [x] **GPX dosya export** işlevselliği ✅  
+- [x] **Uydu Sky Plot** - polar koordinat sistemi ✅
+- [x] **Tab-based arayüz** (Telemetry/Map/Satellites/Sky Plot) ✅
+- [x] **Interactive controls** - zoom, pan, track recording ✅
 
 ### 🔄 Kısa Vadeli (Geliştirme Aşamasında)
-- [ ] Gelişmiş harita görünümü (zoom, pan)
-- [ ] Track çizgisi ve geçmiş rota gösterimi
-- [ ] GPX export işlevselliği
-- [ ] Uydu pozisyon diyagramı (polar view)
+- [x] Gelişmiş harita görünümü (zoom, pan) ✅
+- [x] Track çizgisi ve geçmiş rota gösterimi ✅
+- [x] GPX export işlevselliği ✅
+- [x] Uydu pozisyon diyagramı (polar view) ✅
 
-### Orta Vadeli
-- [ ] Waypoint işaretleme ve yönetimi
+### Orta Vadeli (Sıradaki Geliştirmeler)
+- [ ] Gelişmiş waypoint yönetimi ve navigation
 - [ ] Route planning özellikleri
-- [ ] Gelişmiş veri filtreleme
+- [ ] Harita tile sistemi ve offline maps
+- [ ] Track analiz araçları (elevation profil, speed chart)
 - [ ] Çoklu GPS cihaz desteği
+- [ ] Gelişmiş veri filtreleme ve smoothing
 
 ### Uzun Vadeli
 - [ ] Web tabanlı uzaktan monitoring
