@@ -1,0 +1,48 @@
+# Build artifacts
+build/
+bin/
+obj/
+out/
+
+# Compiled files
+*.o
+*.a
+*.so
+*.exe
+*.app
+*.out
+gps_gui
+gps_main
+
+# Debug info
+*.dSYM/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Log and data files
+*.log
+.env*
+data/gps_log.txt
+
+# macOS files
+.DS_Store
+*/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+*.egg-info/
+
+# ImGui generated files
+imgui.ini
+
+# Backup files
+*~
+*.bak
