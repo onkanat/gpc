@@ -138,6 +138,7 @@ Desteklenen NMEA 0183 mesaj türleri:
 - **ZDA**: Zaman ve tarih
 
 ## 9) Planlanan Özellikler
+Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasındaki notlara dikkat ediniz.bu notlar gui uygulamasının geliştirme sürecini yansıtmaktadır.
 
 ### Kısa Vadeli
 - [ ] GPS port otomatik tespit
