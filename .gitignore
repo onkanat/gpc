@@ -25,6 +25,8 @@ gps_main
 
 # Log and data files
 *.log
+*.nmea
+gps_log_*.nmea
 .env*
 data/gps_log.txt
 
