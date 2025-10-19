@@ -31,6 +31,7 @@ USB porttan bağlanan GPS cihazlarının verilerinin görüntülenmesi ve takibi
 ### Bağımlılıkların Kurulumu
 
 **macOS için:**
+
 ```bash
 # SDL2 kurulumu
 brew install sdl2
@@ -40,6 +41,7 @@ xcode-select --install
 ```
 
 **Linux (Ubuntu/Debian) için:**
+
 ```bash
 sudo apt-get update
 sudo apt-get install libsdl2-dev libgl1-mesa-dev
@@ -99,6 +101,7 @@ GUI uygulamasını başlatmak için:
 ### Yeni Özellikler (v2.0)
 
 #### 🗺️ **Gelişmiş Harita Sistemi**
+
 - **Zoom Controls**: Mouse wheel ile zoom, butonlarla zoom in/out/reset
 - **Pan Destegi**: Orta fare tuşu ile harita kaydırma
 - **Track Görüntüleme**: GPS rotanızın real-time çizimi
@@ -106,6 +109,7 @@ GUI uygulamasını başlatmak için:
 - **Grid System**: Referans çizgileri ile konum belirleme
 
 #### 📊 **Track Yönetimi**
+
 - **Recording Controls**: Start/Stop track recording
 - **Track Statistics**: Mesafe, süre, maksimum hız bilgileri
 - **Visual Track**: Cyan renkte rota çizgisi
@@ -113,12 +117,14 @@ GUI uygulamasını başlatmak için:
 - **Fit to Track**: Tüm rotayı ekrana sığdır
 
 #### 💾 **GPX Export**
+
 - **Standard GPX**: Industry standard GPX 1.1 format
 - **Track Points**: Timestamp, elevation, coordinates
 - **Waypoints**: Future expansion için hazır
 - **Metadata**: Track bilgileri ve oluşturma zamanı
 
 #### 🛰️ **Sky Plot (Uydu Diyagramı)**
+
 - **Polar View**: Uyduların gök kubbesindeki gerçek konumları
 - **SNR Color Coding**: Sinyal gücüne göre renk kodlaması
 - **Interactive**: Uydu seçme ve detay görüntüleme
@@ -126,6 +132,7 @@ GUI uygulamasını başlatmak için:
 - **Compass Labels**: Kuzey, Doğu, Güney, Batı işaretleri
 
 #### 🧭 **Compass & Direction (Pusula Sistemi)**
+
 - **Digital Compass**: Dairesel pusula tasarımı polar view benzeri
 - **GPS Heading**: Gerçek zamanlı yön göstergesi
 - **Magnetic Declination**: Manuel manyetik sapma ayarı
@@ -134,6 +141,7 @@ GUI uygulamasını başlatmak için:
 - **Speed & Course Display**: Anlık hız ve yön bilgileri
 
 #### 📡 **Raw Data Console (Ham Veri Konsolu)**
+
 - **NMEA Monitor**: Son 5 NMEA cümlesinin real-time görüntülenmesi
 - **Color Coding**: Mesaj tipine göre renk kodlaması (RMC, GGA, GSV, vb.)
 - **Command Interface**: GPS cihazına direkt komut gönderme
@@ -142,6 +150,7 @@ GUI uygulamasını başlatmak için:
 - **Configuration**: Update rate, sentence types, restart komutları
 
 #### 🔌 **GPS Connection Management (Bağlantı Yönetimi)**
+
 - **Connection Dialog**: Kullanıcı dostu GPS cihaz bağlantı dialoğu
 - **Automatic Port Detection**: macOS ve Linux için USB GPS cihaz tespiti
 - **Port Selection**: Radio button ile kolay port seçimi
@@ -154,19 +163,22 @@ GUI uygulamasını başlatmak için:
 ### 🔧 **v3.1 Güncellemeleri - Connection Management**
 
 #### **GPS Connection Dialog Implementation**
+
 - **Professional UI**: ImGui tabanlı connection dialog
 - **Port Discovery**: Real-time USB GPS cihaz tespiti
 - **User Control**: Manuel port seçimi ve baud rate ayarlama
 - **Smart Interface**: Sadece uygun durumlarda aktif butonlar
 
 #### **Auto-connect System**
+
 - **Menu Integration**: Connection menüsünde toggle control
 - **Startup Behavior**: Uygulama açılışında otomatik bağlantı
 - **Immediate Action**: Menu'den etkinleştirince anlık bağlantı denemesi
 - **First Available**: İlk uygun GPS cihazına otomatik bağlan
 
 #### **Connection Menu Overhaul**
-```
+
+```plaintext
 Connection Menu:
 ├── Connect...     → Opens GPS Connection Dialog ✅
 ├── Disconnect     → Clean disconnect (already working) ✅  
@@ -174,18 +186,22 @@ Connection Menu:
 ```
 
 #### **Enhanced Error Handling**
+
 - **Connection Failures**: Kullanıcı dostu error messages
 - **Port Issues**: "No GPS devices found" uyarıları
 - **Status Tracking**: Status bar'da real-time connection info
 - **Clean State**: Disconnect'te tüm connection state temizliği
 
 ### 🔧 **v3.0 Güncellemeleri - Modüler Refactoring**
+
 #### **Separation of Concerns Implementation**
+
 - **Modüler Mimari**: Her component artık ayrı dosyada ve kendi sorumluluğuna odaklanıyor
 - **Maintainability**: Bug fixing ve feature additions artık çok daha kolay
 
 #### **Yeni Modüller**
-```
+
+```plaintext
 📁 src/include/
 ├── 🆕 gps_compass.h/c    # Digital compass logic & calculations
 ├── 🆕 gps_console.h/c    # Raw NMEA data management & buffering
@@ -196,12 +212,14 @@ Connection Menu:
 ```
 
 #### **GPS Serial Enhancement**
+
 - **Real Command Sending**: `gps_serial_send_command()` ile gerçek GPS cihaz kontrolü
 - **MTK Protocol Support**: MediaTek GPS modülleri için tam komut desteği
 - **Error Handling**: Komut gönderme hatalarının yakalanması ve raporlanması
 - **Termination Handling**: NMEA komutlarına otomatik `\r\n` ekleme
 
 #### **Compass Module Features**
+
 ```c
 typedef struct {
     float heading;           // Current heading (0-360°)
@@ -209,12 +227,14 @@ typedef struct {
     bool auto_rotate;        // Auto-rotate with GPS course
 } compass_t;
 ```
+
 - **True Heading Calculation**: GPS heading + magnetic declination
 - **Auto-update**: GPS motion data ile otomatik pusula güncelleme
 - **Manual Declination**: Kullanıcı tarafından ayarlanabilir magnetic declination
 - **Future-ready**: WMM (World Magnetic Model) implementation'ı için hazır
 
 #### **Console Module Features**
+
 ```c
 typedef struct {
     char buffer[5][256];     // Circular buffer for NMEA lines
@@ -222,6 +242,7 @@ typedef struct {
     bool auto_scroll;        // Auto-scroll behavior
 } console_t;
 ```
+
 - **Circular Buffer**: Efficient memory usage ile son 5 NMEA cümlesini saklar
 - **Color-coded Display**: NMEA sentence type'a göre renk kodlaması
 - **Command History**: Gönderilen komutların console'da görüntülenmesi
@@ -234,16 +255,19 @@ typedef struct {
 - **Keyboard**: Standart GUI kontrolleri
 
 #### GPS Connection
+
 - **Menu → Connection → Connect...**: GPS Connection Dialog açma
 - **Menu → Connection → Disconnect**: GPS bağlantısını koparma  
 - **Menu → Connection → Auto-connect**: Otomatik bağlantıyı toggle etme
 
 #### Map Controls
+
 - **Mouse Wheel**: Zoom in/out
 - **Middle Mouse + Drag**: Map panning
 - **Left Click**: Map interaction (future features)
 
 #### Raw Data Console
+
 - **Auto-scroll Checkbox**: Yeni NMEA verisi geldiğinde otomatik scroll
 - **Clear Console Button**: Console buffer'ını temizleme
 - **Command Input**: GPS cihazına NMEA komut gönderme
@@ -288,6 +312,7 @@ echo '$GPRMC,183730,A,3907.482,N,12102.436,W,000.0,360.0,120598,015.5,E*67' > te
 ## 8) NMEA ve GPS Veri Desteği
 
 Desteklenen NMEA 0183 mesaj türleri:
+
 - **RMC**: Önerilen minimum özel GPS veriler
 - **GGA**: Global Konumlandırma Sistemi düzeltme verisi
 - **GSA**: GPS DOP ve aktif uydu verisi
@@ -297,6 +322,7 @@ Desteklenen NMEA 0183 mesaj türleri:
 - **ZDA**: Zaman ve tarih
 
 ### GPS Komut Desteği
+
 - **MediaTek (MTK) Commands**: PMTK protokolü ile GPS cihaz konfigürasyonu
 - **Firmware Query**: Cihaz versiyonu sorgulama
 - **Update Rate Control**: NMEA mesaj sıklığı ayarlama
@@ -306,7 +332,8 @@ Desteklenen NMEA 0183 mesaj türleri:
 ## 9) Kod Mimarisi
 
 ### Modüler Yapı
-```
+
+```plaintext
 src/include/
 ├── gps_data.h/c        # GPS data structures & parsing
 ├── gps_serial.h/c      # Serial communication + command sending  
@@ -318,7 +345,8 @@ src/include/
 ```
 
 ### Data Directory Structure
-```
+
+```plaintext
 data/
 ├── gps_log_YYYYMMDD_HHMMSS.nmea  # NMEA log files
 ├── gps_track.gpx                  # GPX track exports
@@ -326,6 +354,7 @@ data/
 ```
 
 ### Component Sorumluluları
+
 - **GPS GUI** (`gps_gui.c`): UI rendering ve event handling
 - **GPS Serial** (`gps_serial.c`): Serial communication ve GPS command interface
 - **GPS Compass** (`gps_compass.c`): Digital compass logic ve direction calculations
@@ -334,9 +363,11 @@ data/
 - **GPS Polar** (`gps_polar.c`): Satellite sky plot ve polar coordinate display
 
 ## 10) Planlanan Özellikler
+
 Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasındaki tasarım notlarına dikkat edilmiştir. Temel özellikler tamamlanmıştır:
 
 ### ✅ Tamamlanan Özellikler
+
 - [x] GPS port otomatik tespit
 - [x] Gerçek zamanlı GPS veri görüntüleme (Telemetry panel)
 - [x] Sinyal kalitesi ve uydu bilgileri (Satellite panel)
@@ -356,6 +387,7 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 - [x] **GPS Connection Dialog** - Port seçimi, baud rate ve auto-connect ✅
 
 ### 🔄 Kısa Vadeli (Geliştirme Aşamasında)
+
 - [x] Gelişmiş harita görünümü (zoom, pan) ✅
 - [x] Track çizgisi ve geçmiş rota gösterimi ✅
 - [x] GPX export işlevselliği ✅
@@ -366,6 +398,7 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 - [ ] Kullanıcı arayüzü iyileştirmeleri ve kontroller
 
 ### Orta Vadeli (Sıradaki Geliştirmeler)
+
 - [ ] Gelişmiş waypoint yönetimi ve navigation
 - [ ] Route planning özellikleri
 - [ ] Harita tile sistemi ve offline maps
@@ -374,6 +407,7 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 - [ ] Gelişmiş veri filtreleme ve smoothing
 
 ### Uzun Vadeli
+
 - [ ] Web tabanlı uzaktan monitoring
 - [ ] Harita tile caching sistemi
 - [ ] Plugin mimarisi
@@ -387,6 +421,7 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 4. Pull Request oluşturun
 
 ### Kod Standartları
+
 - C99/C++11 standartlarına uyum
 - Modüler mimari: Her component ayrı dosyada
 - Açıklayıcı değişken isimleri

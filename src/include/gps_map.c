@@ -22,7 +22,7 @@ void map_system_init(map_system_t* map) {
     // Initialize map view
     map->view.center_lat = 39.0;  // Default center (approximate world center)
     map->view.center_lon = -98.0;
-    map->view.zoom_level = 1.0;
+    map->view.zoom_level = 10.0; // 1.0'dan 10.0'a yükseltildi
     map->view.auto_center = true;
     map->view.show_track = true;
     map->view.show_waypoints = true;
@@ -318,28 +318,44 @@ double map_system_calculate_distance(double lat1, double lon1, double lat2, doub
     return EARTH_RADIUS * c;
 }
 
-void map_lat_lon_to_screen(const map_view_t* view, double lat, double lon, 
-                          float screen_width, float screen_height, 
-                          float* screen_x, float* screen_y) {
+void map_lat_lon_to_screen(const map_view_t* view, double lat, double lon,
+                           float screen_width, float screen_height,
+                           float* screen_x, float* screen_y)
+{
     if (!view || !screen_x || !screen_y) return;
-    
-    // Simple projection (can be improved with proper map projection)
-    double x_offset = (lon - view->center_lon) * view->zoom_level;
-    double y_offset = (lat - view->center_lat) * view->zoom_level;
-    
-    *screen_x = screen_width * 0.5f + (float)(x_offset * screen_width * 0.01);
-    *screen_y = screen_height * 0.5f - (float)(y_offset * screen_height * 0.01);
+
+    float min_dim = fminf(screen_width, screen_height);
+    // 1.0 zoom = yaklaşık 1 px/deg; zoom ile orantılı büyüt
+    float base_px_per_deg = (min_dim / 180.0f) * (float)view->zoom_level;
+    double center_lat_rad = view->center_lat * (M_PI / 180.0);
+    double cos_lat = cos(center_lat_rad);
+    if (fabs(cos_lat) < 1e-6) cos_lat = (cos_lat >= 0 ? 1e-6 : -1e-6);
+
+    double dx = (lon - view->center_lon) * (base_px_per_deg * cos_lat);
+    double dy = (lat - view->center_lat) * base_px_per_deg;
+
+    *screen_x = screen_width * 0.5f + (float)dx;
+    *screen_y = screen_height * 0.5f - (float)dy;
 }
 
 void map_screen_to_lat_lon(const map_view_t* view, float screen_x, float screen_y,
-                          float screen_width, float screen_height,
-                          double* lat, double* lon) {
+                           float screen_width, float screen_height,
+                           double* lat, double* lon)
+{
     if (!view || !lat || !lon) return;
-    
-    // Reverse of the screen projection
-    double x_offset = (screen_x - screen_width * 0.5f) / (screen_width * 0.01 * view->zoom_level);
-    double y_offset = -(screen_y - screen_height * 0.5f) / (screen_height * 0.01 * view->zoom_level);
-    
-    *lon = view->center_lon + x_offset;
-    *lat = view->center_lat + y_offset;
+
+    float min_dim = fminf(screen_width, screen_height);
+    float base_px_per_deg = (min_dim / 180.0f) * (float)view->zoom_level;
+    double center_lat_rad = view->center_lat * (M_PI / 180.0);
+    double cos_lat = cos(center_lat_rad);
+    if (fabs(cos_lat) < 1e-6) cos_lat = (cos_lat >= 0 ? 1e-6 : -1e-6);
+
+    double dx = (double)(screen_x - screen_width * 0.5f);
+    double dy = (double)(screen_y - screen_height * 0.5f);
+
+    double dlat = -dy / base_px_per_deg;
+    double dlon = dx / (base_px_per_deg * cos_lat);
+
+    *lat = view->center_lat + dlat;
+    *lon = view->center_lon + dlon;
 }

@@ -50,3 +50,4 @@ imgui.ini
 # Backup files
 *~
 *.bak
+/data

@@ -11,7 +11,7 @@ Tasarım, SDL2 + OpenGL + Dear ImGui tabanlı C uygulamasına yöneliktir ve kul
 **Yaklaşım:** Tek ana pencere (Main Dashboard) + ImGui sekmeleri  
 **Tasarım hedefi:** Bilgi yoğun ama sade, okunabilir, modern görünüm
 
-```
+```text
 ┌─────────────────────────────────────────────┐
 │ [Menü Çubuğu / Header Bar - 40px]          │
 ├─────────────────────────────────────────────┤
@@ -71,7 +71,7 @@ Tasarım, SDL2 + OpenGL + Dear ImGui tabanlı C uygulamasına yöneliktir ve kul
 
 ## 5. Durum Çubuğu (Status Bar – 1024×40)
 
-```
+```text
 [CONNECTED] Port: /dev/ttyUSB0 | FIX: 3D | Sats: 9 | FPS: 60 | Log: ON
 ```
 

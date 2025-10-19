@@ -1,3 +1,7 @@
+// GPC — GPS Console
+//  Serial port üzerinden GPS verilerini okuyup görselleştiren bir uygulama
+//  SDL2, OpenGL ve ImGui kullanır
+
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
@@ -6,7 +10,17 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <SDL.h>
+#if defined(__has_include)
+#  if __has_include(<SDL.h>)
+#    include <SDL.h>
+#  elif __has_include(<SDL2/SDL.h>)
+#    include <SDL2/SDL.h>
+#  else
+#    error "SDL2 headers not found. Please install SDL2 development packages."
+#  endif
+#else
+#  include <SDL2/SDL.h> // fallback changed from <SDL.h> to satisfy linters without __has_include
+#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -526,7 +540,7 @@ void render_enhanced_map_panel(app_state_t* app) {
         }
         igSameLine(0, 10);
         if (igButton("Reset Zoom", (ImVec2){0, 0})) {
-            map_system_set_zoom(map, 1.0);
+            map_system_set_zoom(map, 10.0); // 1.0 yerine 10.0
         }
         
         // Track statistics
@@ -582,34 +596,35 @@ void render_enhanced_map_panel(app_state_t* app) {
                               (ImVec2){canvas_pos.x + canvas_size.x, y}, grid_color, 1.0f);
         }
         
-        // Draw track history
+        // FIXME: No screen space !!check src/include/gps_map.c  Draw track history 
         if (map->track.point_count > 1 && map->view.show_track) {
-            ImU32 track_color = igGetColorU32_Vec4((ImVec4){0.0f, 0.8f, 1.0f, 0.8f}); // Cyan
-            
+            ImU32 track_color = igGetColorU32_Vec4((ImVec4){0.0f, 0.8f, 1.0f, 0.8f});
             int start_idx = map->track.point_count < MAX_TRACK_POINTS ? 0 : map->track.current_index;
-            
+
             for (int i = 1; i < map->track.point_count; i++) {
                 int prev_idx = (start_idx + i - 1) % MAX_TRACK_POINTS;
                 int curr_idx = (start_idx + i) % MAX_TRACK_POINTS;
-                
+
                 const track_point_t* prev_point = &map->track.points[prev_idx];
                 const track_point_t* curr_point = &map->track.points[curr_idx];
-                
                 if (!prev_point->valid || !curr_point->valid) continue;
-                
+
                 float prev_x, prev_y, curr_x, curr_y;
                 map_lat_lon_to_screen(&map->view, prev_point->latitude, prev_point->longitude,
                                      canvas_size.x, canvas_size.y, &prev_x, &prev_y);
                 map_lat_lon_to_screen(&map->view, curr_point->latitude, curr_point->longitude,
                                      canvas_size.x, canvas_size.y, &curr_x, &curr_y);
-                
-                prev_x += canvas_pos.x;
-                prev_y += canvas_pos.y;
-                curr_x += canvas_pos.x;
-                curr_y += canvas_pos.y;
-                
-                ImDrawList_AddLine(draw_list, (ImVec2){prev_x, prev_y}, 
-                                  (ImVec2){curr_x, curr_y}, track_color, map->view.track_width);
+
+                prev_x += canvas_pos.x; prev_y += canvas_pos.y;
+                curr_x += canvas_pos.x; curr_y += canvas_pos.y;
+
+                ImDrawList_AddLine(draw_list, (ImVec2){prev_x, prev_y}, (ImVec2){curr_x, curr_y},
+                                   track_color, map->view.track_width);
+
+                // Her 20 noktada bir küçük işaret bırak
+                if ((i % 20) == 0) {
+                    ImDrawList_AddCircleFilled(draw_list, (ImVec2){curr_x, curr_y}, 2.0f, track_color, 8);
+                }
             }
         }
         
@@ -686,13 +701,15 @@ void render_enhanced_map_panel(app_state_t* app) {
         if (igIsItemActive() && igIsMouseDragging(ImGuiMouseButton_Middle, 0.0f)) {
             ImVec2 delta;
             igGetMouseDragDelta(&delta, ImGuiMouseButton_Middle, 0.0f);
-            
-            // Convert screen delta to lat/lon delta
-            double lat_delta = -delta.y / (canvas_size.y * 0.01 * map->view.zoom_level);
-            double lon_delta = -delta.x / (canvas_size.x * 0.01 * map->view.zoom_level);
-            
-            map_system_set_center(map, map->view.center_lat + lat_delta, 
-                                     map->view.center_lon + lon_delta);
+
+            // Ekran deltası -> lat/lon farkı (ters dönüşüm)
+            double lat0, lon0, lat1, lon1;
+            map_screen_to_lat_lon(&map->view, 0.0f, 0.0f, canvas_size.x, canvas_size.y, &lat0, &lon0);
+            map_screen_to_lat_lon(&map->view, -delta.x, -delta.y, canvas_size.x, canvas_size.y, &lat1, &lon1);
+
+            map_system_set_center(map,
+                                  map->view.center_lat + (lat1 - lat0),
+                                  map->view.center_lon + (lon1 - lon0));
         }
 }
 
@@ -742,7 +759,7 @@ void render_polar_view_panel(app_state_t* app) {
         ImDrawList* draw_list = igGetWindowDrawList();
         
         // Background circle
-        ImU32 bg_color = igGetColorU32_Col(ImGuiCol_ChildBg, 1.0f);
+        ImU32 bg_color = igGetColorU32_Col(ImGuiCol_ChildBg, 1.00f);
         ImDrawList_AddCircleFilled(draw_list, (ImVec2){center_x, center_y}, radius, bg_color, 64);
         
         // Grid circles (elevation)
@@ -865,11 +882,11 @@ void render_polar_view_panel(app_state_t* app) {
         igTextColored((ImVec4){1.0f, 1.0f, 0.0f, 1.0f}, "●");
         igSameLine(0, 5);
         igText("Good signal (≥20 dB)");
-        
+
         igTextColored((ImVec4){1.0f, 0.5f, 0.0f, 1.0f}, "●");
         igSameLine(0, 5);
         igText("Weak signal (<20 dB)");
-        
+
         igTextColored((ImVec4){0.5f, 0.5f, 0.5f, 1.0f}, "●");
         igSameLine(0, 5);
         igText("No signal");
@@ -1475,6 +1492,7 @@ void ensure_data_directory(void) {
         if (mkdir("data", 0755) != 0) {
             printf("Warning: Could not create data directory\n");
         } else {
+
             printf("Created data directory\n");
         }
     }
