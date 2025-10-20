@@ -46,6 +46,7 @@
 #include "include/gps_polar.h"
 #include "include/gps_compass.h"
 #include "include/gps_console.h"
+#include "include/tools.h"
 
 // GUI Configuration
 #define WINDOW_WIDTH 1024
@@ -73,6 +74,10 @@ typedef struct {
     bool gpx_export_success;
     char gpx_export_message[256];
     
+    // Help/About windows
+    bool show_help_window;
+    bool show_about_window;
+    
     // Connection dialog state
     bool show_connection_dialog;
     bool auto_connect_enabled;
@@ -99,6 +104,9 @@ void render_raw_data_panel(app_state_t* app);
 void render_status_bar(app_state_t* app);
 void render_connection_dialog(app_state_t* app);
 void render_gpx_export_dialog(app_state_t* app);
+void render_help_window(app_state_t* app);
+void render_about_window(app_state_t* app);
+void render_simple_markdown(const char* markdown_text);
 void update_gps_data(app_state_t* app);
 void setup_imgui_style(void);
 void ensure_data_directory(void);
@@ -174,6 +182,8 @@ int main(int argc, char** argv) {
     app_state.auto_scroll_log = true;
     app_state.active_tab = 0;
     app_state.show_gpx_export_dialog = false;
+    app_state.show_help_window = false;
+    app_state.show_about_window = false;
     strcpy(app_state.connection_status_text, "Not Connected");
     app_state.last_error[0] = '\0';
     strcpy(app_state.gpx_filename, "data/gps_track.gpx");
@@ -245,6 +255,15 @@ int main(int argc, char** argv) {
         render_connection_dialog(&app_state);
         render_gpx_export_dialog(&app_state);
 
+        // Help and About windows
+        if (app_state.show_help_window) {
+            render_help_window(&app_state);
+        }
+        
+        if (app_state.show_about_window) {
+            render_about_window(&app_state);
+        }
+
         // Demo window for development
         if (app_state.show_demo_window) {
             igShowDemoWindow(&app_state.show_demo_window);
@@ -315,7 +334,7 @@ void setup_imgui_style(void) {
 void render_header_bar(app_state_t* app) {
     if (igBeginMenuBar()) {
         // Logo/Title
-        igText("GPC — GPS Console");
+        igText("[GPC — GPS Console]");
         
         igSeparator();
         
@@ -388,7 +407,20 @@ void render_header_bar(app_state_t* app) {
             }
             igEndMenu();
         }
-        
+
+        // Help menu
+        if (igBeginMenu("Help", true)) {
+            // Show help/about /src/docs/gpc_help.md içeriğine bağlanabilir
+            if (igMenuItem_Bool("Help", NULL, false, true)) {
+                app->show_help_window = true;
+            }
+            // About dialog Show /src/docs/gpc_about.md içeriğine bağlanabilir
+            if (igMenuItem_Bool("About", NULL, false, true)) {
+                app->show_about_window = true;
+            }
+            igEndMenu();
+        }
+
         // Right side icons would go here
         
         igEndMenuBar();
@@ -1496,4 +1528,183 @@ void ensure_data_directory(void) {
             printf("Created data directory\n");
         }
     }
+}
+
+/**
+ * Simple markdown renderer for ImGui
+ * This is a basic implementation that handles:
+ * - Headers (# ## ###)
+ * - Bold (**text**)
+ * - Italic (*text*)
+ * - Code blocks (```)
+ * - Inline code (`code`)
+ * - Lists (- item)
+ * - Horizontal rules (---)
+ */
+void render_simple_markdown(const char* markdown_text) {
+    if (!markdown_text) {
+        igText("No content available");
+        return;
+    }
+    
+    char line[1024];
+    const char* current = markdown_text;
+    bool in_code_block = false;
+    
+    while (*current) {
+        // Find end of line
+        const char* line_end = current;
+        while (*line_end && *line_end != '\n' && *line_end != '\r') {
+            line_end++;
+        }
+        
+        // Copy line to buffer
+        size_t line_length = line_end - current;
+        if (line_length >= 1024) {
+            line_length = 1023;
+        }
+        strncpy(line, current, line_length);
+        line[line_length] = '\0';
+        
+        // Trim whitespace from the beginning
+        char* trimmed_line = line;
+        while (*trimmed_line == ' ' || *trimmed_line == '\t') {
+            trimmed_line++;
+        }
+        
+        // Handle different markdown elements
+        if (strncmp(trimmed_line, "```", 3) == 0) {
+            // Code block toggle
+            in_code_block = !in_code_block;
+            if (in_code_block) {
+                igSeparator();
+                igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){0.8f, 0.8f, 0.8f, 1.0f});
+            } else {
+                igPopStyleColor(1);
+                igSeparator();
+            }
+        } else if (in_code_block) {
+            // Inside code block - render as-is with monospace
+            igText("%s", trimmed_line);
+        } else if (strncmp(trimmed_line, "### ", 4) == 0) {
+            // H3 header
+            igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){0.4f, 0.8f, 1.0f, 1.0f});
+            igText("%s", trimmed_line + 4);
+            igPopStyleColor(1);
+            igSeparator();
+        } else if (strncmp(trimmed_line, "## ", 3) == 0) {
+            // H2 header
+            igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){0.3f, 0.7f, 1.0f, 1.0f});
+            igText("%s", trimmed_line + 3);
+            igPopStyleColor(1);
+            igSeparator();
+        } else if (strncmp(trimmed_line, "# ", 2) == 0) {
+            // H1 header
+            igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){0.2f, 0.6f, 1.0f, 1.0f});
+            igText("%s", trimmed_line + 2);
+            igPopStyleColor(1);
+            igSeparator();
+        } else if (strncmp(trimmed_line, "---", 3) == 0 || strncmp(trimmed_line, "===", 3) == 0) {
+            // Horizontal rule
+            igSeparator();
+        } else if (strncmp(trimmed_line, "- ", 2) == 0 || strncmp(trimmed_line, "* ", 2) == 0) {
+            // List item
+            igBulletText("%s", trimmed_line + 2);
+        } else if (strlen(trimmed_line) == 0) {
+            // Empty line - add spacing
+            igSpacing();
+        } else {
+            // Regular text - handle inline formatting
+            // For now, just render as plain text
+            // TODO: Handle **bold**, *italic*, `code` inline formatting
+            igTextWrapped("%s", trimmed_line);
+        }
+        
+        // Move to next line
+        current = line_end;
+        if (*current == '\r') current++;
+        if (*current == '\n') current++;
+    }
+}
+
+void render_help_window(app_state_t* app) {
+    if (!app->show_help_window) {
+        return;
+    }
+    
+    // Set window size and position
+    igSetNextWindowSize((ImVec2){600, 500}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){200, 100}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    
+    if (igBegin("Help - GPC GPS Console", &app->show_help_window, ImGuiWindowFlags_None)) {
+        static markdown_content_t help_content = {NULL, 0, false, ""};
+        static bool content_loaded = false;
+        
+        if (!content_loaded) {
+            content_loaded = tools_load_markdown_file("src/docs/gpc_help.md", &help_content);
+        }
+        
+        if (help_content.is_loaded && help_content.content) {
+            // Create scrollable child window for content
+            if (igBeginChild_Str("help_content", (ImVec2){0, -30}, true, ImGuiWindowFlags_None)) {
+                render_simple_markdown(help_content.content);
+            }
+            igEndChild();
+            
+            igSeparator();
+            if (igButton("Close", (ImVec2){0, 0})) {
+                app->show_help_window = false;
+            }
+        } else {
+            igText("Unable to load help file: src/docs/gpc_help.md");
+            igText("Please ensure the file exists and is readable.");
+            
+            igSeparator();
+            if (igButton("Close", (ImVec2){0, 0})) {
+                app->show_help_window = false;
+            }
+        }
+    }
+    igEnd();
+}
+
+void render_about_window(app_state_t* app) {
+    if (!app->show_about_window) {
+        return;
+    }
+    
+    // Set window size and position
+    igSetNextWindowSize((ImVec2){500, 400}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){250, 150}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    
+    if (igBegin("About - GPC GPS Console", &app->show_about_window, ImGuiWindowFlags_None)) {
+        static markdown_content_t about_content = {NULL, 0, false, ""};
+        static bool content_loaded = false;
+        
+        if (!content_loaded) {
+            content_loaded = tools_load_markdown_file("src/docs/gpc_about.md", &about_content);
+        }
+        
+        if (about_content.is_loaded && about_content.content) {
+            // Create scrollable child window for content
+            if (igBeginChild_Str("about_content", (ImVec2){0, -30}, true, ImGuiWindowFlags_None)) {
+                render_simple_markdown(about_content.content);
+            }
+            igEndChild();
+            
+            igSeparator();
+            if (igButton("Close", (ImVec2){0, 0})) {
+                app->show_about_window = false;
+            }
+        } else {
+            igText("Unable to load about file: src/docs/gpc_about.md");
+            igText("Please ensure the file exists and is readable.");
+            
+            igSeparator();
+            if (igButton("Close", (ImVec2){0, 0})) {
+                app->show_about_window = false;
+            }
+        }
+    }
+    igEnd();
 }
