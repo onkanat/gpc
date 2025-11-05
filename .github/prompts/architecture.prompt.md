@@ -15,7 +15,8 @@ gpc/
 │       ├── gps_polar.h/c   # Satellite sky plot  
 │       ├── gps_compass.h/c # Digital compass
 │       ├── gps_console.h/c # Raw NMEA console
-│       └── minmea.h/c      # NMEA parsing
+│       ├── minmea.h/c       # NMEA parsing
+│       └── tools.h/c       # Build & utility scripts
 ├── data/                   # GPS logs & exports
 └── .vscode/               # Development tools
 ```
