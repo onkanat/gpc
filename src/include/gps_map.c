@@ -13,6 +13,47 @@
 
 // Earth radius in meters
 #define EARTH_RADIUS 6371000.0
+#define WEB_MERCATOR_MAX_LAT 85.05112878
+#define TILE_SIZE_PX 256.0
+
+static double clamp_lat_mercator(double lat) {
+    if (lat > WEB_MERCATOR_MAX_LAT) return WEB_MERCATOR_MAX_LAT;
+    if (lat < -WEB_MERCATOR_MAX_LAT) return -WEB_MERCATOR_MAX_LAT;
+    return lat;
+}
+
+static double normalize_lon(double lon) {
+    while (lon < -180.0) lon += 360.0;
+    while (lon > 180.0) lon -= 360.0;
+    return lon;
+}
+
+static int view_zoom_to_slippy_zoom(double view_zoom) {
+    double normalized = (view_zoom <= 0.0) ? 0.1 : view_zoom;
+    int zoom = (int)floor(log2(normalized) + 12.0);
+    if (zoom < 0) zoom = 0;
+    if (zoom > 19) zoom = 19;
+    return zoom;
+}
+
+static double lon_to_world_x(double lon) {
+    return (normalize_lon(lon) + 180.0) / 360.0;
+}
+
+static double lat_to_world_y(double lat) {
+    double clamped_lat = clamp_lat_mercator(lat);
+    double lat_rad = clamped_lat * M_PI / 180.0;
+    return (1.0 - asinh(tan(lat_rad)) / M_PI) / 2.0;
+}
+
+static double world_x_to_lon(double x) {
+    return normalize_lon(x * 360.0 - 180.0);
+}
+
+static double world_y_to_lat(double y) {
+    double n = M_PI * (1.0 - 2.0 * y);
+    return atan(sinh(n)) * 180.0 / M_PI;
+}
 
 void map_system_init(map_system_t* map) {
     if (!map) return;
@@ -28,6 +69,8 @@ void map_system_init(map_system_t* map) {
     map->view.show_waypoints = true;
     map->view.track_width = 2.0f;
     map->view.follow_mode = true;
+    map->view.offline_only = true;
+    map->view.prefer_mbtiles = false;
     
     // Initialize track
     map->track.point_count = 0;
@@ -324,18 +367,22 @@ void map_lat_lon_to_screen(const map_view_t* view, double lat, double lon,
 {
     if (!view || !screen_x || !screen_y) return;
 
-    float min_dim = fminf(screen_width, screen_height);
-    // 1.0 zoom = yaklaşık 1 px/deg; zoom ile orantılı büyüt
-    float base_px_per_deg = (min_dim / 180.0f) * (float)view->zoom_level;
-    double center_lat_rad = view->center_lat * (M_PI / 180.0);
-    double cos_lat = cos(center_lat_rad);
-    if (fabs(cos_lat) < 1e-6) cos_lat = (cos_lat >= 0 ? 1e-6 : -1e-6);
+    int slippy_zoom = view_zoom_to_slippy_zoom(view->zoom_level);
+    double world_px = TILE_SIZE_PX * (double)(1 << slippy_zoom);
 
-    double dx = (lon - view->center_lon) * (base_px_per_deg * cos_lat);
-    double dy = (lat - view->center_lat) * base_px_per_deg;
+    double center_x = lon_to_world_x(view->center_lon);
+    double center_y = lat_to_world_y(view->center_lat);
+    double point_x = lon_to_world_x(lon);
+    double point_y = lat_to_world_y(lat);
 
-    *screen_x = screen_width * 0.5f + (float)dx;
-    *screen_y = screen_height * 0.5f - (float)dy;
+    double dx_world = point_x - center_x;
+    if (dx_world > 0.5) dx_world -= 1.0;
+    if (dx_world < -0.5) dx_world += 1.0;
+
+    double dy_world = point_y - center_y;
+
+    *screen_x = screen_width * 0.5f + (float)(dx_world * world_px);
+    *screen_y = screen_height * 0.5f + (float)(dy_world * world_px);
 }
 
 void map_screen_to_lat_lon(const map_view_t* view, float screen_x, float screen_y,
@@ -344,18 +391,23 @@ void map_screen_to_lat_lon(const map_view_t* view, float screen_x, float screen_
 {
     if (!view || !lat || !lon) return;
 
-    float min_dim = fminf(screen_width, screen_height);
-    float base_px_per_deg = (min_dim / 180.0f) * (float)view->zoom_level;
-    double center_lat_rad = view->center_lat * (M_PI / 180.0);
-    double cos_lat = cos(center_lat_rad);
-    if (fabs(cos_lat) < 1e-6) cos_lat = (cos_lat >= 0 ? 1e-6 : -1e-6);
+    int slippy_zoom = view_zoom_to_slippy_zoom(view->zoom_level);
+    double world_px = TILE_SIZE_PX * (double)(1 << slippy_zoom);
 
-    double dx = (double)(screen_x - screen_width * 0.5f);
-    double dy = (double)(screen_y - screen_height * 0.5f);
+    double center_x = lon_to_world_x(view->center_lon);
+    double center_y = lat_to_world_y(view->center_lat);
 
-    double dlat = -dy / base_px_per_deg;
-    double dlon = dx / (base_px_per_deg * cos_lat);
+    double dx_px = (double)screen_x - (double)screen_width * 0.5;
+    double dy_px = (double)screen_y - (double)screen_height * 0.5;
 
-    *lat = view->center_lat + dlat;
-    *lon = view->center_lon + dlon;
+    double x_world = center_x + (dx_px / world_px);
+    double y_world = center_y + (dy_px / world_px);
+
+    while (x_world < 0.0) x_world += 1.0;
+    while (x_world > 1.0) x_world -= 1.0;
+    if (y_world < 0.0) y_world = 0.0;
+    if (y_world > 1.0) y_world = 1.0;
+
+    *lat = world_y_to_lat(y_world);
+    *lon = world_x_to_lon(x_world);
 }

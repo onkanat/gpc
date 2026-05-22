@@ -32,14 +32,14 @@ all: gps_gui
 
 gps_gui:
 	g++ -Wall -Wextra -std=c++11 -I src/cimgui -I src/cimgui/imgui -I src/cimgui/imgui/backends -I src/include \
-	src/gps_gui.c src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c src/include/gps_map.c src/include/gps_polar.c src/include/gps_compass.c src/include/gps_console.c src/include/tools.c \
+	src/gps_gui.c src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c src/include/gps_map.c src/include/gps_polar.c src/include/gps_compass.c src/include/gps_console.c src/include/tools.c src/include/gps_tiles.c src/include/gps_tile_loader.c src/include/gps_mbtiles.c src/include/gps_poi.c \
 	src/cimgui/cimgui.cpp src/cimgui/cimgui_impl.cpp \
 	src/cimgui/imgui/imgui.cpp src/cimgui/imgui/imgui_draw.cpp \
 	src/cimgui/imgui/imgui_tables.cpp src/cimgui/imgui/imgui_widgets.cpp \
 	src/cimgui/imgui/imgui_demo.cpp \
 	src/cimgui/imgui/backends/imgui_impl_sdl2.cpp \
 	src/cimgui/imgui/backends/imgui_impl_opengl3.cpp \
-	`sdl2-config --cflags --libs` -framework OpenGL -o gps_gui
+	`sdl2-config --cflags --libs` -framework OpenGL -lsqlite3 -o gps_gui
 
 clean:
 	rm -f gps_gui

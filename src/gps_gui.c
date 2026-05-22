@@ -8,6 +8,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <math.h>
+#include <stdint.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #if defined(__has_include)
@@ -47,6 +48,10 @@
 #include "include/gps_compass.h"
 #include "include/gps_console.h"
 #include "include/tools.h"
+#include "include/gps_tiles.h"
+#include "include/gps_tile_loader.h"
+#include "include/gps_mbtiles.h"
+#include "include/gps_poi.h"
 
 // GUI Configuration
 #define WINDOW_WIDTH 1024
@@ -111,6 +116,190 @@ void render_simple_markdown(const char *markdown_text);
 void update_gps_data(app_state_t *app);
 void setup_imgui_style(void);
 void ensure_data_directory(void);
+
+#define TILE_TEXTURE_CACHE_SIZE 128
+
+typedef struct
+{
+    bool valid;
+    bool missing;
+    int z;
+    int x;
+    int y;
+    GLuint texture_id;
+    int width;
+    int height;
+    uint64_t last_used_tick;
+} map_tile_texture_entry_t;
+
+static map_tile_texture_entry_t g_tile_texture_cache[TILE_TEXTURE_CACHE_SIZE];
+static uint64_t g_tile_texture_tick = 1;
+static uint64_t g_tile_cache_hits = 0;
+static uint64_t g_tile_cache_misses = 0;
+static uint64_t g_tile_cache_failures = 0;
+static uint64_t g_tile_cache_mbtiles_reads = 0;
+static uint64_t g_tile_cache_mbtiles_decodes = 0;
+static uint64_t g_tile_cache_online_attempts = 0;
+
+static GLuint map_tile_texture_get_or_load(const char *base_dir,
+                                           const char *mbtiles_path,
+                                           bool prefer_mbtiles,
+                                           bool offline_only,
+                                           int z,
+                                           int x,
+                                           int y)
+{
+    int free_index = -1;
+    int lru_index = 0;
+    uint64_t lru_tick = UINT64_MAX;
+
+    for (int i = 0; i < TILE_TEXTURE_CACHE_SIZE; i++)
+    {
+        if (g_tile_texture_cache[i].valid)
+        {
+            if (g_tile_texture_cache[i].z == z && g_tile_texture_cache[i].x == x && g_tile_texture_cache[i].y == y)
+            {
+                g_tile_texture_cache[i].last_used_tick = g_tile_texture_tick++;
+                g_tile_cache_hits++;
+                return g_tile_texture_cache[i].texture_id;
+            }
+
+            if (g_tile_texture_cache[i].last_used_tick < lru_tick)
+            {
+                lru_tick = g_tile_texture_cache[i].last_used_tick;
+                lru_index = i;
+            }
+        }
+        else if (free_index < 0)
+        {
+            free_index = i;
+        }
+    }
+
+    int width = 0, height = 0;
+    unsigned char *pixels = NULL;
+
+    if (prefer_mbtiles)
+    {
+        unsigned char *tile_blob = NULL;
+        int tile_blob_size = 0;
+        if (map_mbtiles_get_tile_blob(mbtiles_path, z, x, y, &tile_blob, &tile_blob_size))
+        {
+            g_tile_cache_mbtiles_reads++;
+            if (map_tile_blob_is_bmp(tile_blob, tile_blob_size))
+            {
+                pixels = map_tile_decode_bmp_rgb_from_memory(tile_blob, tile_blob_size, &width, &height);
+                if (pixels)
+                {
+                    g_tile_cache_mbtiles_decodes++;
+                }
+            }
+            map_mbtiles_free_blob(tile_blob);
+        }
+
+        if (!pixels)
+        {
+            pixels = map_tile_load_bmp_rgb(base_dir, z, x, y, &width, &height);
+        }
+    }
+    else
+    {
+        pixels = map_tile_load_bmp_rgb(base_dir, z, x, y, &width, &height);
+        if (!pixels)
+        {
+            unsigned char *tile_blob = NULL;
+            int tile_blob_size = 0;
+            if (map_mbtiles_get_tile_blob(mbtiles_path, z, x, y, &tile_blob, &tile_blob_size))
+            {
+                g_tile_cache_mbtiles_reads++;
+                if (map_tile_blob_is_bmp(tile_blob, tile_blob_size))
+                {
+                    pixels = map_tile_decode_bmp_rgb_from_memory(tile_blob, tile_blob_size, &width, &height);
+                    if (pixels)
+                    {
+                        g_tile_cache_mbtiles_decodes++;
+                    }
+                }
+                map_mbtiles_free_blob(tile_blob);
+            }
+        }
+    }
+
+    if (!pixels && !offline_only)
+    {
+        // Phase-5 placeholder: online fetch queue/fetcher will be integrated here.
+        g_tile_cache_online_attempts++;
+    }
+
+    g_tile_cache_misses++;
+    if (!pixels || width <= 0 || height <= 0)
+    {
+        map_tile_free_pixels(pixels);
+
+        int use_index = (free_index >= 0) ? free_index : lru_index;
+        if (g_tile_texture_cache[use_index].valid && g_tile_texture_cache[use_index].texture_id != 0)
+        {
+            glDeleteTextures(1, &g_tile_texture_cache[use_index].texture_id);
+        }
+        g_tile_texture_cache[use_index].valid = true;
+        g_tile_texture_cache[use_index].missing = true;
+        g_tile_texture_cache[use_index].z = z;
+        g_tile_texture_cache[use_index].x = x;
+        g_tile_texture_cache[use_index].y = y;
+        g_tile_texture_cache[use_index].texture_id = 0;
+        g_tile_texture_cache[use_index].width = 0;
+        g_tile_texture_cache[use_index].height = 0;
+        g_tile_texture_cache[use_index].last_used_tick = g_tile_texture_tick++;
+        g_tile_cache_failures++;
+        return 0;
+    }
+
+    GLuint texture_id = 0;
+    glGenTextures(1, &texture_id);
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    map_tile_free_pixels(pixels);
+
+    int use_index = (free_index >= 0) ? free_index : lru_index;
+    if (g_tile_texture_cache[use_index].valid && g_tile_texture_cache[use_index].texture_id != 0)
+    {
+        glDeleteTextures(1, &g_tile_texture_cache[use_index].texture_id);
+    }
+
+    g_tile_texture_cache[use_index].valid = true;
+    g_tile_texture_cache[use_index].missing = false;
+    g_tile_texture_cache[use_index].z = z;
+    g_tile_texture_cache[use_index].x = x;
+    g_tile_texture_cache[use_index].y = y;
+    g_tile_texture_cache[use_index].texture_id = texture_id;
+    g_tile_texture_cache[use_index].width = width;
+    g_tile_texture_cache[use_index].height = height;
+    g_tile_texture_cache[use_index].last_used_tick = g_tile_texture_tick++;
+
+    return texture_id;
+}
+
+static void map_tile_texture_cache_cleanup(void)
+{
+    for (int i = 0; i < TILE_TEXTURE_CACHE_SIZE; i++)
+    {
+        if (g_tile_texture_cache[i].valid && g_tile_texture_cache[i].texture_id != 0)
+        {
+            glDeleteTextures(1, &g_tile_texture_cache[i].texture_id);
+        }
+        g_tile_texture_cache[i].valid = false;
+        g_tile_texture_cache[i].missing = false;
+        g_tile_texture_cache[i].texture_id = 0;
+        g_tile_texture_cache[i].last_used_tick = 0;
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -296,6 +485,9 @@ int main(int argc, char **argv)
     polar_view_cleanup(&app_state.polar_view);
     compass_cleanup(&app_state.compass);
     console_cleanup(&app_state.console);
+    map_tile_texture_cache_cleanup();
+    map_mbtiles_shutdown();
+    poi_db_shutdown();
 
     cImGui_ImplOpenGL3_Shutdown();
     cImGui_ImplSDL2_Shutdown();
@@ -618,6 +810,12 @@ void render_enhanced_map_panel(app_state_t *app)
         // Toggle handled by checkbox
     }
 
+    igSameLine(0, 20);
+    igCheckbox("Offline Only", &map->view.offline_only);
+
+    igSameLine(0, 20);
+    igCheckbox("Prefer MBTiles", &map->view.prefer_mbtiles);
+
     // Zoom controls
     igText("Zoom: %.2fx", map->view.zoom_level);
     igSameLine(0, 20);
@@ -654,6 +852,43 @@ void render_enhanced_map_panel(app_state_t *app)
     }
 
     igSeparator();
+    igText("Waypoints: %d", map->waypoints.waypoint_count);
+    if (map->waypoints.waypoint_count > 0)
+    {
+        int delete_index = -1;
+        for (int i = 0; i < map->waypoints.waypoint_count; i++)
+        {
+            waypoint_t *wp = &map->waypoints.waypoints[i];
+            if (!wp->active)
+                continue;
+
+            igText("%d) %s", i + 1, wp->name);
+            igSameLine(0, 8);
+
+            char go_id[32];
+            snprintf(go_id, sizeof(go_id), "Go##wp_go_%d", i);
+            if (igButton(go_id, (ImVec2){40, 0}))
+            {
+                map_system_set_center(map, wp->latitude, wp->longitude);
+                map->view.auto_center = false;
+            }
+
+            igSameLine(0, 6);
+            char del_id[32];
+            snprintf(del_id, sizeof(del_id), "Del##wp_del_%d", i);
+            if (igButton(del_id, (ImVec2){40, 0}))
+            {
+                delete_index = i;
+            }
+        }
+
+        if (delete_index >= 0)
+        {
+            map_system_remove_waypoint(map, delete_index);
+        }
+    }
+
+    igSeparator();
 
     // Map canvas
     ImVec2 canvas_pos, canvas_size;
@@ -679,20 +914,127 @@ void render_enhanced_map_panel(app_state_t *app)
                        (ImVec2){canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y},
                        border_color, 4.0f, ImDrawFlags_RoundCornersAll, 1.0f);
 
-    // Draw grid lines for reference
-    ImU32 grid_color = igGetColorU32_Vec4((ImVec4){0.3f, 0.3f, 0.3f, 0.5f});
-    for (int i = 1; i < 4; i++)
-    {
-        float x = canvas_pos.x + (canvas_size.x * i / 4);
-        float y = canvas_pos.y + (canvas_size.y * i / 4);
+    // Tile-aware background (MVP): show local tile coverage using Web-Mercator tile math
+    int tile_zoom = map_tiles_resolve_zoom_level(map->view.zoom_level);
+    tile_range_t tile_range = map_view_visible_tile_range(&map->view, canvas_size.x, canvas_size.y, tile_zoom);
+    bool rendered_tile_blocks = false;
 
-        // Vertical lines
-        ImDrawList_AddLine(draw_list, (ImVec2){x, canvas_pos.y},
-                           (ImVec2){x, canvas_pos.y + canvas_size.y}, grid_color, 1.0f);
-        // Horizontal lines
-        ImDrawList_AddLine(draw_list, (ImVec2){canvas_pos.x, y},
-                           (ImVec2){canvas_pos.x + canvas_size.x, y}, grid_color, 1.0f);
+    if (tile_range.valid)
+    {
+        int tile_count_x = tile_range.max_x - tile_range.min_x + 1;
+        int tile_count_y = tile_range.max_y - tile_range.min_y + 1;
+        int tile_count = tile_count_x * tile_count_y;
+
+        // Safety cap for MVP rendering workload
+        if (tile_count > 0 && tile_count <= 400)
+        {
+            for (int tx = tile_range.min_x; tx <= tile_range.max_x; tx++)
+            {
+                for (int ty = tile_range.min_y; ty <= tile_range.max_y; ty++)
+                {
+                    double lat_nw, lon_nw, lat_se, lon_se;
+                    map_tile_to_lat_lon(tx, ty, tile_zoom, &lat_nw, &lon_nw);
+                    map_tile_to_lat_lon(tx + 1, ty + 1, tile_zoom, &lat_se, &lon_se);
+
+                    float sx1, sy1, sx2, sy2;
+                    map_lat_lon_to_screen(&map->view, lat_nw, lon_nw, canvas_size.x, canvas_size.y, &sx1, &sy1);
+                    map_lat_lon_to_screen(&map->view, lat_se, lon_se, canvas_size.x, canvas_size.y, &sx2, &sy2);
+
+                    float left = canvas_pos.x + fminf(sx1, sx2);
+                    float right = canvas_pos.x + fmaxf(sx1, sx2);
+                    float top = canvas_pos.y + fminf(sy1, sy2);
+                    float bottom = canvas_pos.y + fmaxf(sy1, sy2);
+
+                    GLuint texture_id = map_tile_texture_get_or_load("data/map_tiles",
+                                                                     "data/map_tiles.mbtiles",
+                                                                     map->view.prefer_mbtiles,
+                                                                     map->view.offline_only,
+                                                                     tile_zoom,
+                                                                     tx,
+                                                                     ty);
+                    if (texture_id != 0)
+                    {
+                        ImTextureRef tex_ref = {NULL, (ImTextureID)texture_id};
+                        ImDrawList_AddImage(draw_list,
+                                            tex_ref,
+                                            (ImVec2){left, top},
+                                            (ImVec2){right, bottom},
+                                            (ImVec2){0.0f, 0.0f},
+                                            (ImVec2){1.0f, 1.0f},
+                                            igGetColorU32_Vec4((ImVec4){1.0f, 1.0f, 1.0f, 1.0f}));
+                    }
+                    else
+                    {
+                        bool has_mbtiles_tile = map_mbtiles_has_tile("data/map_tiles.mbtiles", tile_zoom, tx, ty);
+                        ImU32 tile_fill = has_mbtiles_tile
+                                              ? igGetColorU32_Vec4((ImVec4){0.24f, 0.14f, 0.34f, 0.70f})
+                                              : igGetColorU32_Vec4((ImVec4){0.18f, 0.18f, 0.18f, 0.65f});
+                        ImU32 tile_border = has_mbtiles_tile
+                                                ? igGetColorU32_Vec4((ImVec4){0.62f, 0.40f, 0.92f, 0.45f})
+                                                : igGetColorU32_Vec4((ImVec4){0.35f, 0.35f, 0.35f, 0.35f});
+                        ImDrawList_AddRectFilled(draw_list, (ImVec2){left, top}, (ImVec2){right, bottom},
+                                                 tile_fill, 0.0f, ImDrawFlags_None);
+                        ImDrawList_AddRect(draw_list, (ImVec2){left, top}, (ImVec2){right, bottom},
+                                           tile_border, 0.0f, ImDrawFlags_None, 1.0f);
+                    }
+                    rendered_tile_blocks = true;
+                }
+            }
+        }
     }
+
+    int poi_in_view = 0;
+    if (tile_range.valid)
+    {
+        double lat_nw, lon_nw, lat_se, lon_se;
+        map_tile_to_lat_lon(tile_range.min_x, tile_range.min_y, tile_zoom, &lat_nw, &lon_nw);
+        map_tile_to_lat_lon(tile_range.max_x + 1, tile_range.max_y + 1, tile_zoom, &lat_se, &lon_se);
+
+        double min_lat = fmin(lat_nw, lat_se);
+        double max_lat = fmax(lat_nw, lat_se);
+        double min_lon = fmin(lon_nw, lon_se);
+        double max_lon = fmax(lon_nw, lon_se);
+
+        poi_in_view = poi_db_count_bbox("data/map_db.sqlite", min_lat, min_lon, max_lat, max_lon);
+    }
+
+    // Fallback grid when no tile blocks are rendered
+    if (!rendered_tile_blocks)
+    {
+        ImU32 grid_color = igGetColorU32_Vec4((ImVec4){0.3f, 0.3f, 0.3f, 0.5f});
+        for (int i = 1; i < 4; i++)
+        {
+            float x = canvas_pos.x + (canvas_size.x * i / 4);
+            float y = canvas_pos.y + (canvas_size.y * i / 4);
+
+            // Vertical lines
+            ImDrawList_AddLine(draw_list, (ImVec2){x, canvas_pos.y},
+                               (ImVec2){x, canvas_pos.y + canvas_size.y}, grid_color, 1.0f);
+            // Horizontal lines
+            ImDrawList_AddLine(draw_list, (ImVec2){canvas_pos.x, y},
+                               (ImVec2){canvas_pos.x + canvas_size.x, y}, grid_color, 1.0f);
+        }
+    }
+
+    // Lightweight debug text for tile state
+    char tile_debug[196];
+    snprintf(tile_debug, sizeof(tile_debug), "Tile Z:%d [%d..%d, %d..%d] H:%llu M:%llu F:%llu MB:%llu/%llu OA:%llu POI:%d",
+             tile_zoom,
+             tile_range.min_x,
+             tile_range.max_x,
+             tile_range.min_y,
+             tile_range.max_y,
+             (unsigned long long)g_tile_cache_hits,
+             (unsigned long long)g_tile_cache_misses,
+             (unsigned long long)g_tile_cache_failures,
+             (unsigned long long)g_tile_cache_mbtiles_reads,
+             (unsigned long long)g_tile_cache_mbtiles_decodes,
+             (unsigned long long)g_tile_cache_online_attempts,
+             poi_in_view);
+    ImDrawList_AddText_Vec2(draw_list,
+                            (ImVec2){canvas_pos.x + 10, canvas_pos.y + canvas_size.y - 20},
+                            igGetColorU32_Vec4((ImVec4){0.75f, 0.75f, 0.75f, 0.9f}),
+                            tile_debug, NULL);
 
     // @onkanatTODO:  track çok küçük ise oluyor scale No screen space !!check src/include/gps_map.c  Draw track history
     if (map->track.point_count > 1 && map->view.show_track)
@@ -729,6 +1071,34 @@ void render_enhanced_map_panel(app_state_t *app)
             {
                 ImDrawList_AddCircleFilled(draw_list, (ImVec2){curr_x, curr_y}, 2.0f, track_color, 8);
             }
+        }
+    }
+
+    // Draw waypoints
+    if (map->view.show_waypoints && map->waypoints.waypoint_count > 0)
+    {
+        for (int i = 0; i < map->waypoints.waypoint_count; i++)
+        {
+            const waypoint_t *wp = &map->waypoints.waypoints[i];
+            if (!wp->active)
+                continue;
+
+            float wp_x, wp_y;
+            map_lat_lon_to_screen(&map->view, wp->latitude, wp->longitude,
+                                  canvas_size.x, canvas_size.y, &wp_x, &wp_y);
+
+            wp_x += canvas_pos.x;
+            wp_y += canvas_pos.y;
+
+            ImU32 outer_color = igGetColorU32_Vec4((ImVec4){0.1f, 0.1f, 0.1f, 0.9f});
+            ImU32 inner_color = igGetColorU32_Vec4((ImVec4){0.05f, 0.75f, 1.0f, 1.0f});
+            ImDrawList_AddCircleFilled(draw_list, (ImVec2){wp_x, wp_y}, 6.0f, outer_color, 16);
+            ImDrawList_AddCircleFilled(draw_list, (ImVec2){wp_x, wp_y}, 4.0f, inner_color, 16);
+
+            ImDrawList_AddText_Vec2(draw_list,
+                                    (ImVec2){wp_x + 8.0f, wp_y - 8.0f},
+                                    igGetColorU32_Col(ImGuiCol_Text, 1.0f),
+                                    wp->name, NULL);
         }
     }
 
@@ -797,6 +1167,57 @@ void render_enhanced_map_panel(app_state_t *app)
     if (igInvisibleButton("map_canvas", canvas_size, ImGuiButtonFlags_None))
     {
         // Handle click events (future: add waypoints, etc.)
+    }
+
+    static double pending_wp_lat = 0.0;
+    static double pending_wp_lon = 0.0;
+    static char pending_wp_name[64] = "";
+
+    // Right-click to open waypoint add popup
+    if (igIsItemHovered(ImGuiHoveredFlags_None) && igIsMouseClicked_Bool(ImGuiMouseButton_Right, false))
+    {
+        ImVec2 mouse_pos;
+        igGetMousePos(&mouse_pos);
+
+        float local_x = mouse_pos.x - canvas_pos.x;
+        float local_y = mouse_pos.y - canvas_pos.y;
+
+        double wp_lat, wp_lon;
+        map_screen_to_lat_lon(&map->view, local_x, local_y,
+                              canvas_size.x, canvas_size.y,
+                              &wp_lat, &wp_lon);
+
+        pending_wp_lat = wp_lat;
+        pending_wp_lon = wp_lon;
+        snprintf(pending_wp_name, sizeof(pending_wp_name), "WP-%d", map->waypoints.waypoint_count + 1);
+        igOpenPopup_Str("Add Waypoint", ImGuiPopupFlags_None);
+    }
+
+    if (igBeginPopupModal("Add Waypoint", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        igText("Waypoint coordinates:");
+        igText("Lat: %.6f", pending_wp_lat);
+        igText("Lon: %.6f", pending_wp_lon);
+        igSeparator();
+
+        igText("Name:");
+        igInputText("##wp_name", pending_wp_name, sizeof(pending_wp_name),
+                    ImGuiInputTextFlags_None, NULL, NULL);
+
+        igSeparator();
+        if (igButton("Add", (ImVec2){80, 0}))
+        {
+            map_system_add_waypoint(map, pending_wp_lat, pending_wp_lon, pending_wp_name);
+            igCloseCurrentPopup();
+        }
+
+        igSameLine(0, 10);
+        if (igButton("Cancel", (ImVec2){80, 0}))
+        {
+            igCloseCurrentPopup();
+        }
+
+        igEndPopup();
     }
 
     // Mouse wheel zoom
@@ -1784,6 +2205,19 @@ void ensure_data_directory(void)
         {
 
             printf("Created data directory\n");
+        }
+    }
+
+    // Check if map tile cache directory exists
+    if (stat("data/map_tiles", &st) == -1)
+    {
+        if (mkdir("data/map_tiles", 0755) != 0)
+        {
+            printf("Warning: Could not create data/map_tiles directory\n");
+        }
+        else
+        {
+            printf("Created data/map_tiles directory\n");
         }
     }
 }

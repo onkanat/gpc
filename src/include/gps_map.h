@@ -42,6 +42,8 @@ typedef struct {
     bool show_waypoints;      // Show waypoints
     float track_width;        // Track line width
     bool follow_mode;         // Auto-follow GPS position
+    bool offline_only;        // Disable online tile attempts
+    bool prefer_mbtiles;      // Read MBTiles before disk tiles
 } map_view_t;
 
 // Track data management
