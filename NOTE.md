@@ -128,3 +128,39 @@ Aşağıdaki görsel, bu layout’un genel görünümünü temsil eder:
 **Hazırlayan:** Hakan Kılıçaslan  
 **Tarih:** 2025-10-18  
 **Durum:** Görsel tasarım aşaması (işlevsel entegrasyon bekleniyor)
+
+---
+
+## 10. Geliştirme Notları (2026-05-22)
+
+Bu bölüm, harita altyapısındaki yeni teknik kararları ve uygulama sonuçlarını özetler.
+
+### Tamamlanan Teknik Adımlar
+
+- Slippy tile matematiği modülü eklendi (`gps_tiles.h/c`).
+- Yerel tile loader modülü eklendi (`gps_tile_loader.h/c`).
+- MBTiles reader modülü eklendi (`gps_mbtiles.h/c`).
+- MBTiles tarafında sqlite bağlantı + prepared statement cache aktifleştirildi.
+- `metadata.scheme` (tms/xyz) desteği ve metadata yoksa fallback probing eklendi.
+- Tile texture cache + negative cache + telemetri sayaçları eklendi.
+- Map panelde `Offline Only` ve `Prefer MBTiles` kontrolleri eklendi.
+- POI DB için başlangıç modülü eklendi (`gps_poi.h/c`) ve bbox count sorgusu map debug overlay'e bağlandı.
+
+### Mimari Kararlar
+
+- Offline-first yaklaşımı korunmuştur.
+- Tile yükleme zinciri ayarlanabilir hale getirilmiştir:
+  - Disk BMP -> MBTiles BMP (varsayılan)
+  - MBTiles BMP -> Disk BMP (Prefer MBTiles açıkken)
+- Online fetch henüz uygulanmadı; non-blocking hook noktası hazırlandı.
+
+### Doğrulama
+
+- `make clean && make` derlemesi başarıyla tamamlandı.
+- İlgili dosyalarda statik hata kontrolü temiz.
+
+### Sonraki Teknik Adımlar
+
+- MBTiles `tile_data` için PNG/JPEG decode desteği.
+- Online tile fetch queue ve cache yazma mekanizması.
+- POI marker render + seçme/zoom UX geliştirmesi.

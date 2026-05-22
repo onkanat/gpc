@@ -25,6 +25,25 @@ Bu belge, GPC projesindeki **Map (Harita) penceresi** için mimari, geliştirme 
 
 ## 3. Geliştirme Adımları
 
+### 3.0. Uygulanan MVP Durumu (2026-05-22)
+
+- ✅ Web Mercator uyumlu ekran/harita dönüşümü (`map_lat_lon_to_screen`, `map_screen_to_lat_lon`)
+- ✅ Tile matematiği modülü eklendi (`gps_tiles.h/c`)
+- ✅ Yerel tile loader eklendi (`gps_tile_loader.h/c`)
+- ✅ Map panel tile-aware render akışı aktif
+- ✅ BMP tile decode + OpenGL texture cache (LRU-benzeri sabit cache)
+- ✅ MBTiles (SQLite) tile varlık kontrolü (kısmi entegrasyon)
+- ✅ MBTiles `tile_data` içinden BMP blob decode + texture üretimi
+- ✅ MBTiles için bağlantı + prepared statement cache (performans iyileştirmesi)
+- ✅ MBTiles `metadata.scheme` (tms/xyz) otomatik satır dönüşüm desteği
+- ✅ `metadata.scheme` yoksa TMS/XYZ fallback probing ile otomatik uyum
+- ✅ Tile kaynak önceliği seçimi (Disk/MBTiles) için kontrol alanı
+- ✅ Online fallback için non-blocking hazırlık noktası (hook + telemetri sayaçları)
+- ✅ POI DB (SQLite) bbox count altyapısı + map debug overlay entegrasyonu
+- ✅ Sağ tık ile waypoint ekleme (onay popup'ı ile)
+- ✅ Waypoint listesi: Go / Del aksiyonları
+- ✅ `data/map_tiles` klasörü otomatik oluşturma
+
 ### 3.1. Tile Tabanlı Harita
 
 - OSM veya MBTiles formatında tile’ları indir ve cache’le
@@ -74,4 +93,4 @@ Bu belge, GPC projesindeki **Map (Harita) penceresi** için mimari, geliştirme 
 ---
 
 **Hazırlayan:** GPC Project
-**Güncelleme:** 2025-10-19
+**Güncelleme:** 2026-05-22

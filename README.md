@@ -86,6 +86,10 @@ GUI uygulamasını başlatmak için:
 - **Sinyal Kalitesi Görüntüleme**: GPS sinyal gücü ve uydu sayısı monitörü
 - **Grafik Arayüz**: Dear ImGui tabanlı modern kontrol paneli
 - **Gelişmiş Harita Görünümü**: Zoom, pan, track görüntüleme ile interactive harita
+- **Offline Tile Pipeline**: Disk BMP + MBTiles tile_data (BMP) okuma ve cache
+- **MBTiles Uyum Katmanı**: `metadata.scheme` (tms/xyz) + otomatik fallback probing
+- **POI DB Scaffold**: `data/map_db.sqlite` üzerinden bbox bazlı POI sayımı (debug overlay)
+- **Tile Source Controls**: Offline-only ve MBTiles önceliği seçenekleri
 - **Track Kayıt Sistemi**: GPS rotanızı kaydedin ve GPX formatında export edin
 - **Sky Plot**: Uyduların gök kubbesindeki konumunu polar koordinat sisteminde görün
 - **Digital Compass**: GPS yön bilgisi ile otomatik pusula ve magnetic declination
@@ -401,7 +405,9 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 
 - [ ] Gelişmiş waypoint yönetimi ve navigation
 - [ ] Route planning özellikleri
-- [ ] Harita tile sistemi ve offline maps
+- [x] Harita tile sistemi ve offline maps (disk + MBTiles BMP) ✅
+- [ ] Online tile indirme/fetch kuyruğu (hazırlık hook mevcut)
+- [~] POI/vektör DB altyapısı (bbox count hazır, marker render sonraki adım)
 - [ ] Track analiz araçları (elevation profil, speed chart)
 - [ ] Çoklu GPS cihaz desteği
 - [ ] Gelişmiş veri filtreleme ve smoothing

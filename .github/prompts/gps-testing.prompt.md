@@ -127,6 +127,66 @@ $PMTK314,-1*04    # Restore default NMEA sentences
    - Check elevation/azimuth values
    - Monitor SNR (signal-to-noise) ratios
 
+### Satellite Monitoring - Detailed Test Matrix
+
+#### Test Case S-01: Basic Satellite Visibility
+- **Precondition**: GPS connected, raw NMEA stream active (GSV sentences visible)
+- **Steps**:
+   1. Open **Satellites** panel and **Sky Plot** panel
+   2. Wait 10-30 seconds for updates
+   3. Compare visible satellite count in Telemetry vs list rows
+- **Expected**:
+   - Satellite list is not empty
+   - PRN values are shown (non-zero)
+   - Sky Plot has at least one rendered satellite marker
+
+#### Test Case S-02: SNR Quality Rendering
+- **Precondition**: Device has satellite lock or partial lock
+- **Steps**:
+   1. Observe SNR bars in **Satellite List**
+   2. Check color transitions while signal changes
+- **Expected**:
+   - SNR >~35 appears as strong (green)
+   - SNR between ~20-35 appears medium (yellow)
+   - SNR <~20 appears weak (red/orange depending on panel)
+   - No SNR should be shown as empty/placeholder (e.g. `--`)
+
+#### Test Case S-03: Sky Plot Geometry Consistency
+- **Precondition**: GSV provides azimuth/elevation
+- **Steps**:
+   1. Pick 2-3 satellites from list (known azimuth/elevation)
+   2. Cross-check approximate direction on Sky Plot
+   3. Repeat after 30-60 seconds
+- **Expected**:
+   - Higher elevation satellites render closer to center
+   - Lower elevation satellites render near outer rings
+   - East/West/North/South orientation remains consistent
+
+#### Test Case S-04: Used-in-Fix Correlation
+- **Precondition**: Valid position fix available
+- **Steps**:
+   1. Observe satellites marked as used in fix (GSA context)
+   2. Compare with visual highlight in Sky Plot
+- **Expected**:
+   - Satellites used in fix are clearly distinguishable
+   - Used count in telemetry aligns with visible fix indicators
+
+#### Test Case S-05: Degraded Signal Behavior
+- **Precondition**: Start outdoors with stable fix
+- **Steps**:
+   1. Move to obstructed environment (near building/indoors)
+   2. Observe SNR decline and satellite visibility changes for 1-2 min
+- **Expected**:
+   - Visible satellites and SNR may drop gracefully
+   - UI remains responsive (no freeze/crash)
+   - Fix quality transitions are reflected in Telemetry
+
+#### Suggested Pass Criteria (Satellite Module)
+- No crash/freeze during continuous updates for 5+ minutes
+- Satellite counts remain internally consistent across panels
+- SNR visualization and Sky Plot positions are coherent with NMEA input
+- Used-in-fix indicators behave consistently with fix state
+
 ### Compass & Direction
 1. **Heading Display**
    - Move GPS device while walking/driving
