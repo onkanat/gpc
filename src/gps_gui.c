@@ -9,6 +9,9 @@
 #include <unistd.h>
 #include <math.h>
 #include <stdint.h>
+#include <ctype.h>
+#include <errno.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #if defined(__has_include)
@@ -52,12 +55,22 @@
 #include "include/gps_tile_loader.h"
 #include "include/gps_mbtiles.h"
 #include "include/gps_poi.h"
+#include "include/gps_config.h"
+#include "include/gps_analysis.h"
+#include "include/gps_implot.h"
 
 // GUI Configuration
 #define WINDOW_WIDTH 1024
 #define WINDOW_HEIGHT 768
 #define LEFT_PANEL_WIDTH 320
 #define STATUS_BAR_HEIGHT 40
+#define CONNECTION_HISTORY_SIZE 5
+
+typedef struct
+{
+    char port[256];
+    int baud;
+} connection_history_entry_t;
 
 // Global application state
 typedef struct
@@ -76,9 +89,17 @@ typedef struct
     // UI state
     int active_tab; // 0=Telemetry, 1=Map, 2=Satellites, 3=Polar, 4=Compass, 5=Raw Data
     bool show_gpx_export_dialog;
+    bool show_gpx_import_dialog;
+    bool show_csv_export_dialog;
     char gpx_filename[256];
+    char gpx_import_filename[256];
+    char csv_export_filename[256];
     bool gpx_export_success;
     char gpx_export_message[256];
+    bool gpx_import_success;
+    char gpx_import_message[256];
+    bool csv_export_success;
+    char csv_export_message[256];
 
     // Help/About windows
     bool show_help_window;
@@ -91,6 +112,10 @@ typedef struct
     int selected_baud;
     char available_ports[16][256];
     int available_port_count;
+    connection_history_entry_t recent_connections[CONNECTION_HISTORY_SIZE];
+    int recent_connection_count;
+    int selected_recent_index;
+    bool use_light_theme;
 } app_state_t;
 
 // Function declarations
@@ -107,15 +132,164 @@ void render_compass_window(app_state_t *app);
 void render_compass_panel(app_state_t *app);
 void render_raw_data_window(app_state_t *app);
 void render_raw_data_panel(app_state_t *app);
+void render_analysis_window(app_state_t *app);
+void render_analysis_panel(app_state_t *app);
 void render_status_bar(app_state_t *app);
 void render_connection_dialog(app_state_t *app);
 void render_gpx_export_dialog(app_state_t *app);
+void render_gpx_import_dialog(app_state_t *app);
+void render_csv_export_dialog(app_state_t *app);
 void render_help_window(app_state_t *app);
 void render_about_window(app_state_t *app);
 void render_simple_markdown(const char *markdown_text);
 void update_gps_data(app_state_t *app);
-void setup_imgui_style(void);
+void setup_imgui_style(bool use_light_theme);
 void ensure_data_directory(void);
+
+static void app_state_apply_config(app_state_t *app, const gps_config_t *config)
+{
+    if (!app || !config)
+    {
+        return;
+    }
+
+    app->use_light_theme = config->use_light_theme;
+    app->auto_connect_enabled = config->auto_connect_enabled;
+    app->selected_baud = config->selected_baud;
+    app->show_demo_window = config->show_demo_window;
+    app->map_system.view.offline_only = config->offline_only;
+    app->map_system.view.prefer_mbtiles = config->prefer_mbtiles;
+    strncpy(app->selected_port, config->selected_port, sizeof(app->selected_port) - 1);
+    app->selected_port[sizeof(app->selected_port) - 1] = '\0';
+}
+
+static void app_state_fill_config(const app_state_t *app, gps_config_t *config)
+{
+    if (!app || !config)
+    {
+        return;
+    }
+
+    gps_config_init_defaults(config);
+    config->use_light_theme = app->use_light_theme;
+    config->auto_connect_enabled = app->auto_connect_enabled;
+    config->selected_baud = app->selected_baud;
+    config->offline_only = app->map_system.view.offline_only;
+    config->prefer_mbtiles = app->map_system.view.prefer_mbtiles;
+    config->show_demo_window = app->show_demo_window;
+    strncpy(config->selected_port, app->selected_port, sizeof(config->selected_port) - 1);
+    config->selected_port[sizeof(config->selected_port) - 1] = '\0';
+    strncpy(config->layout_ini_path, "imgui.ini", sizeof(config->layout_ini_path) - 1);
+    config->layout_ini_path[sizeof(config->layout_ini_path) - 1] = '\0';
+}
+
+static void ui_show_tooltip(const char *text)
+{
+    if (text && igIsItemHovered(ImGuiHoveredFlags_None))
+    {
+        igSetTooltip("%s", text);
+    }
+}
+
+static bool str_contains_case_insensitive(const char *haystack, const char *needle)
+{
+    if (!needle || needle[0] == '\0')
+    {
+        return true;
+    }
+    if (!haystack)
+    {
+        return false;
+    }
+
+    size_t nlen = strlen(needle);
+    size_t hlen = strlen(haystack);
+    if (nlen > hlen)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i + nlen <= hlen; i++)
+    {
+        bool matched = true;
+        for (size_t j = 0; j < nlen; j++)
+        {
+            char hc = (char)tolower((unsigned char)haystack[i + j]);
+            char nc = (char)tolower((unsigned char)needle[j]);
+            if (hc != nc)
+            {
+                matched = false;
+                break;
+            }
+        }
+
+        if (matched)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void connection_history_add(app_state_t *app, const char *port, int baud)
+{
+    if (!app || !port || strlen(port) == 0 || baud <= 0)
+    {
+        return;
+    }
+
+    connection_history_entry_t entry;
+    memset(&entry, 0, sizeof(entry));
+    strncpy(entry.port, port, sizeof(entry.port) - 1);
+    entry.port[sizeof(entry.port) - 1] = '\0';
+    entry.baud = baud;
+
+    int existing_index = -1;
+    for (int i = 0; i < app->recent_connection_count; i++)
+    {
+        if (app->recent_connections[i].baud == baud && strcmp(app->recent_connections[i].port, port) == 0)
+        {
+            existing_index = i;
+            break;
+        }
+    }
+
+    if (existing_index == 0)
+    {
+        app->selected_recent_index = 0;
+        return;
+    }
+
+    if (existing_index > 0)
+    {
+        for (int i = existing_index; i > 0; i--)
+        {
+            app->recent_connections[i] = app->recent_connections[i - 1];
+        }
+        app->recent_connections[0] = entry;
+        app->selected_recent_index = 0;
+        return;
+    }
+
+    int shift_from = app->recent_connection_count;
+    if (shift_from >= CONNECTION_HISTORY_SIZE)
+    {
+        shift_from = CONNECTION_HISTORY_SIZE - 1;
+    }
+
+    for (int i = shift_from; i > 0; i--)
+    {
+        app->recent_connections[i] = app->recent_connections[i - 1];
+    }
+
+    app->recent_connections[0] = entry;
+    if (app->recent_connection_count < CONNECTION_HISTORY_SIZE)
+    {
+        app->recent_connection_count++;
+    }
+    app->selected_recent_index = 0;
+}
 
 #define TILE_TEXTURE_CACHE_SIZE 128
 
@@ -140,6 +314,1090 @@ static uint64_t g_tile_cache_failures = 0;
 static uint64_t g_tile_cache_mbtiles_reads = 0;
 static uint64_t g_tile_cache_mbtiles_decodes = 0;
 static uint64_t g_tile_cache_online_attempts = 0;
+static uint64_t g_online_queue_enqueued = 0;
+static uint64_t g_online_queue_dedup_skips = 0;
+static uint64_t g_online_queue_full_skips = 0;
+static uint64_t g_online_queue_focus_updates = 0;
+static uint64_t g_online_queue_aged_picks = 0;
+static uint64_t g_online_queue_retry_requeues = 0;
+static uint64_t g_online_net_cooldown_events = 0;
+static uint64_t g_online_net_cooldown_ms_total = 0;
+static uint32_t g_online_worker_interval_last_ms = 180;
+static uint32_t g_online_worker_idle_delay_last_ms = 120;
+static uint64_t g_online_fetch_success = 0;
+static uint64_t g_online_fetch_fail_total = 0;
+static uint64_t g_online_fetch_fail_io = 0;
+static uint64_t g_online_fetch_fail_download = 0;
+static uint64_t g_online_fetch_fail_convert = 0;
+static uint32_t g_online_last_process_ms = 0;
+static uint64_t g_online_queue_fail_cache_skips = 0;
+static bool g_online_tools_detected = false;
+static bool g_online_has_curl = false;
+static bool g_online_has_sips = false;
+static bool g_online_has_magick = false;
+static bool g_online_has_convert = false;
+static bool g_online_has_ffmpeg = false;
+static SDL_mutex *g_online_queue_mutex = NULL;
+static SDL_Thread *g_online_worker_thread = NULL;
+static SDL_atomic_t g_online_worker_stop;
+static uint64_t g_online_worker_processed_total = 0;
+static uint64_t g_online_completion_enqueued = 0;
+static uint64_t g_online_completion_dropped = 0;
+static uint64_t g_online_completion_drained = 0;
+static uint64_t g_online_queue_enqueue_seq = 1;
+static int g_online_queue_focus_zoom = -1;
+static int g_online_queue_focus_x = 0;
+static int g_online_queue_focus_y = 0;
+static int g_online_download_fail_streak = 0;
+static uint32_t g_online_network_cooldown_until_ms = 0;
+
+#define ONLINE_FAIL_CACHE_SIZE 512
+#define ONLINE_FAIL_TTL_MS 120000U
+
+typedef struct
+{
+    bool valid;
+    int z;
+    int x;
+    int y;
+    uint32_t retry_after_ms;
+} online_fail_cache_entry_t;
+
+static online_fail_cache_entry_t g_online_fail_cache[ONLINE_FAIL_CACHE_SIZE];
+
+#define ONLINE_TILE_QUEUE_SIZE 256
+
+typedef struct
+{
+    bool valid;
+    int z;
+    int x;
+    int y;
+    int attempts;
+    uint64_t retry_after_tick;
+    uint64_t enqueue_seq;
+    uint64_t enqueue_tick;
+} online_tile_request_t;
+
+static online_tile_request_t g_online_tile_queue[ONLINE_TILE_QUEUE_SIZE];
+static uint64_t g_online_tile_queue_tick = 1;
+
+#define ONLINE_COMPLETION_QUEUE_SIZE 512
+typedef struct
+{
+    int z;
+    int x;
+    int y;
+} online_tile_completion_t;
+
+static online_tile_completion_t g_online_completion_queue[ONLINE_COMPLETION_QUEUE_SIZE];
+static int g_online_completion_head = 0;
+static int g_online_completion_tail = 0;
+static int g_online_completion_count = 0;
+
+typedef struct
+{
+    int z;
+    int x;
+    int y;
+    int attempts;
+} online_tile_job_t;
+
+static int online_tile_worker_thread_fn(void *userdata);
+static int online_completion_drain_and_invalidate_cache(void);
+
+static bool ensure_directory_recursive(const char *path)
+{
+    if (!path || path[0] == '\0')
+    {
+        return false;
+    }
+
+    char tmp[512];
+    snprintf(tmp, sizeof(tmp), "%s", path);
+
+    size_t len = strlen(tmp);
+    if (len == 0)
+    {
+        return false;
+    }
+
+    if (tmp[len - 1] == '/')
+    {
+        tmp[len - 1] = '\0';
+    }
+
+    for (char *p = tmp + 1; *p; p++)
+    {
+        if (*p == '/')
+        {
+            *p = '\0';
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+            {
+                return false;
+            }
+            *p = '/';
+        }
+    }
+
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool ensure_tile_parent_dirs(const char *base_dir, int z, int x)
+{
+    if (!base_dir)
+    {
+        return false;
+    }
+
+    char z_dir[512];
+    char x_dir[512];
+    snprintf(z_dir, sizeof(z_dir), "%s/%d", base_dir, z);
+    snprintf(x_dir, sizeof(x_dir), "%s/%d", z_dir, x);
+
+    if (!ensure_directory_recursive(z_dir))
+    {
+        return false;
+    }
+    if (!ensure_directory_recursive(x_dir))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+typedef enum
+{
+    ONLINE_FETCH_OK = 0,
+    ONLINE_FETCH_FAIL_IO = 1,
+    ONLINE_FETCH_FAIL_DOWNLOAD = 2,
+    ONLINE_FETCH_FAIL_CONVERT = 3
+} online_fetch_status_t;
+
+static int run_quiet_command(const char *cmd)
+{
+    if (!cmd || cmd[0] == '\0')
+    {
+        return -1;
+    }
+    return system(cmd);
+}
+
+static void online_queue_lock(void)
+{
+    if (g_online_queue_mutex)
+    {
+        SDL_LockMutex(g_online_queue_mutex);
+    }
+}
+
+static void online_queue_unlock(void)
+{
+    if (g_online_queue_mutex)
+    {
+        SDL_UnlockMutex(g_online_queue_mutex);
+    }
+}
+
+static bool online_completion_enqueue_nolock(int z, int x, int y)
+{
+    if (g_online_completion_count >= ONLINE_COMPLETION_QUEUE_SIZE)
+    {
+        g_online_completion_dropped++;
+        return false;
+    }
+
+    g_online_completion_queue[g_online_completion_tail].z = z;
+    g_online_completion_queue[g_online_completion_tail].x = x;
+    g_online_completion_queue[g_online_completion_tail].y = y;
+    g_online_completion_tail = (g_online_completion_tail + 1) % ONLINE_COMPLETION_QUEUE_SIZE;
+    g_online_completion_count++;
+    g_online_completion_enqueued++;
+    return true;
+}
+
+static bool online_completion_dequeue_nolock(online_tile_completion_t *out)
+{
+    if (!out || g_online_completion_count <= 0)
+    {
+        return false;
+    }
+
+    *out = g_online_completion_queue[g_online_completion_head];
+    g_online_completion_head = (g_online_completion_head + 1) % ONLINE_COMPLETION_QUEUE_SIZE;
+    g_online_completion_count--;
+    return true;
+}
+
+static bool command_exists_cached(const char *cmd_name)
+{
+    if (!cmd_name || cmd_name[0] == '\0')
+    {
+        return false;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "command -v %s >/dev/null 2>&1", cmd_name);
+    return (run_quiet_command(cmd) == 0);
+}
+
+static void detect_online_toolchain_once(void)
+{
+    if (g_online_tools_detected)
+    {
+        return;
+    }
+
+    g_online_has_curl = command_exists_cached("curl");
+#if defined(__APPLE__)
+    g_online_has_sips = command_exists_cached("sips");
+#else
+    g_online_has_sips = false;
+#endif
+    g_online_has_magick = command_exists_cached("magick");
+    g_online_has_convert = command_exists_cached("convert");
+    g_online_has_ffmpeg = command_exists_cached("ffmpeg");
+    g_online_tools_detected = true;
+}
+
+static bool convert_png_to_bmp_with_fallbacks(const char *png_path, const char *bmp_path)
+{
+    if (!png_path || !bmp_path)
+    {
+        return false;
+    }
+
+    char cmd[1600];
+    detect_online_toolchain_once();
+
+#if defined(__APPLE__)
+    if (g_online_has_sips)
+    {
+        snprintf(cmd,
+                 sizeof(cmd),
+                 "/usr/bin/sips -s format bmp '%s' --out '%s' >/dev/null 2>&1",
+                 png_path,
+                 bmp_path);
+        if (run_quiet_command(cmd) == 0)
+        {
+            return true;
+        }
+    }
+#endif
+
+    // ImageMagick (new CLI)
+    if (g_online_has_magick)
+    {
+        snprintf(cmd,
+                 sizeof(cmd),
+                 "magick convert '%s' BMP3:'%s' >/dev/null 2>&1",
+                 png_path,
+                 bmp_path);
+        if (run_quiet_command(cmd) == 0)
+        {
+            return true;
+        }
+    }
+
+    // ImageMagick (legacy CLI)
+    if (g_online_has_convert)
+    {
+        snprintf(cmd,
+                 sizeof(cmd),
+                 "convert '%s' BMP3:'%s' >/dev/null 2>&1",
+                 png_path,
+                 bmp_path);
+        if (run_quiet_command(cmd) == 0)
+        {
+            return true;
+        }
+    }
+
+    // FFmpeg fallback
+    if (g_online_has_ffmpeg)
+    {
+        snprintf(cmd,
+                 sizeof(cmd),
+                 "ffmpeg -y -loglevel error -i '%s' '%s' >/dev/null 2>&1",
+                 png_path,
+                 bmp_path);
+        if (run_quiet_command(cmd) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool move_file_with_copy_fallback(const char *src_path, const char *dst_path)
+{
+    if (!src_path || !dst_path || src_path[0] == '\0' || dst_path[0] == '\0')
+    {
+        return false;
+    }
+
+    if (rename(src_path, dst_path) == 0)
+    {
+        return true;
+    }
+
+    FILE *src = fopen(src_path, "rb");
+    if (!src)
+    {
+        return false;
+    }
+
+    FILE *dst = fopen(dst_path, "wb");
+    if (!dst)
+    {
+        fclose(src);
+        return false;
+    }
+
+    bool ok = true;
+    unsigned char buffer[8192];
+    while (1)
+    {
+        size_t nread = fread(buffer, 1, sizeof(buffer), src);
+        if (nread > 0)
+        {
+            size_t nwritten = fwrite(buffer, 1, nread, dst);
+            if (nwritten != nread)
+            {
+                ok = false;
+                break;
+            }
+        }
+
+        if (nread < sizeof(buffer))
+        {
+            if (ferror(src))
+            {
+                ok = false;
+            }
+            break;
+        }
+    }
+
+    if (fclose(dst) != 0)
+    {
+        ok = false;
+    }
+    fclose(src);
+
+    if (!ok)
+    {
+        remove(dst_path);
+        return false;
+    }
+
+    if (remove(src_path) != 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool online_tile_fetch_and_cache(const char *base_dir, int z, int x, int y, online_fetch_status_t *status_out)
+{
+    if (status_out)
+    {
+        *status_out = ONLINE_FETCH_OK;
+    }
+
+    if (!base_dir)
+    {
+        if (status_out)
+        {
+            *status_out = ONLINE_FETCH_FAIL_IO;
+        }
+        return false;
+    }
+
+    detect_online_toolchain_once();
+    if (!g_online_has_curl)
+    {
+        if (status_out)
+        {
+            *status_out = ONLINE_FETCH_FAIL_DOWNLOAD;
+        }
+        return false;
+    }
+
+    if (!ensure_tile_parent_dirs(base_dir, z, x))
+    {
+        if (status_out)
+        {
+            *status_out = ONLINE_FETCH_FAIL_IO;
+        }
+        return false;
+    }
+
+    char bmp_path[512];
+    map_tile_build_path(base_dir, z, x, y, bmp_path, (int)sizeof(bmp_path));
+
+    char tmp_png[512];
+    const char *tmp_root = getenv("TMPDIR");
+    if (!tmp_root || tmp_root[0] == '\0')
+    {
+        tmp_root = "data";
+    }
+    snprintf(tmp_png, sizeof(tmp_png), "%s/gpc_tile_%d_%d_%d.png", tmp_root, z, x, y);
+
+    // OSM tile policy: identify the application with a stable User-Agent
+    // and provide a meaningful Referer URL.
+    static const char *k_osm_user_agent = "GPC-GPS-Console/1.0 (+https://github.com/onkanat/gpc)";
+    static const char *k_osm_referer = "https://github.com/onkanat/gpc";
+
+    char cmd[1800];
+    snprintf(cmd,
+             sizeof(cmd),
+             "curl -L -sS --fail --connect-timeout 4 --max-time 10 "
+             "-H 'User-Agent: %s' -e '%s' "
+             "'https://tile.openstreetmap.org/%d/%d/%d.png' -o '%s'",
+             k_osm_user_agent,
+             k_osm_referer,
+             z,
+             x,
+             y,
+             tmp_png);
+    int curl_rc = system(cmd);
+    if (curl_rc != 0)
+    {
+        remove(tmp_png);
+        if (status_out)
+        {
+            *status_out = ONLINE_FETCH_FAIL_DOWNLOAD;
+        }
+        return false;
+    }
+
+    bool converted = convert_png_to_bmp_with_fallbacks(tmp_png, bmp_path);
+    if (converted)
+    {
+        // BMP uretimi basarili olsa bile PNG'yi de cache'te tut:
+        // bazi araclarin urettigi BMP varyantlari decoder tarafinda
+        // desteklenmeyebilir; PNG fallback goruntulenmeyi garanti eder.
+        char png_path[512];
+        snprintf(png_path, sizeof(png_path), "%s/%d/%d/%d.png", base_dir, z, x, y);
+        if (!move_file_with_copy_fallback(tmp_png, png_path))
+        {
+            remove(tmp_png);
+        }
+        return true;
+    }
+
+    // Conversion başarısızsa PNG dosyasını cache'te tut.
+    // Not: Loader artık native PNG decode zincirine sahip olduğundan,
+    // PNG cache yazımı başarılıysa bu tile "fetch success" kabul edilir.
+    char png_path[512];
+    snprintf(png_path, sizeof(png_path), "%s/%d/%d/%d.png", base_dir, z, x, y);
+    if (move_file_with_copy_fallback(tmp_png, png_path))
+    {
+        return true;
+    }
+
+    remove(tmp_png);
+
+    if (status_out)
+    {
+        *status_out = ONLINE_FETCH_FAIL_IO;
+    }
+    return false;
+}
+
+static int online_tile_queue_pending_count(void)
+{
+    int count = 0;
+    online_queue_lock();
+    for (int i = 0; i < ONLINE_TILE_QUEUE_SIZE; i++)
+    {
+        if (g_online_tile_queue[i].valid)
+        {
+            count++;
+        }
+    }
+    online_queue_unlock();
+    return count;
+}
+
+static bool online_fail_cache_contains_active_nolock(int z, int x, int y)
+{
+    uint32_t now_ms = SDL_GetTicks();
+
+    for (int i = 0; i < ONLINE_FAIL_CACHE_SIZE; i++)
+    {
+        online_fail_cache_entry_t *e = &g_online_fail_cache[i];
+        if (!e->valid)
+        {
+            continue;
+        }
+
+        if (e->z == z && e->x == x && e->y == y)
+        {
+            if (now_ms < e->retry_after_ms)
+            {
+                return true;
+            }
+
+            // TTL dolduysa kaydi temizle
+            e->valid = false;
+            return false;
+        }
+    }
+
+    return false;
+}
+
+static void online_fail_cache_mark_nolock(int z, int x, int y, uint32_t ttl_ms)
+{
+    uint32_t now_ms = SDL_GetTicks();
+    int free_index = -1;
+    int overwrite_index = 0;
+    uint32_t oldest = UINT32_MAX;
+
+    for (int i = 0; i < ONLINE_FAIL_CACHE_SIZE; i++)
+    {
+        online_fail_cache_entry_t *e = &g_online_fail_cache[i];
+        if (e->valid)
+        {
+            if (e->z == z && e->x == x && e->y == y)
+            {
+                e->retry_after_ms = now_ms + ttl_ms;
+                return;
+            }
+
+            if (e->retry_after_ms < oldest)
+            {
+                oldest = e->retry_after_ms;
+                overwrite_index = i;
+            }
+        }
+        else if (free_index < 0)
+        {
+            free_index = i;
+        }
+    }
+
+    int use_index = (free_index >= 0) ? free_index : overwrite_index;
+    g_online_fail_cache[use_index].valid = true;
+    g_online_fail_cache[use_index].z = z;
+    g_online_fail_cache[use_index].x = x;
+    g_online_fail_cache[use_index].y = y;
+    g_online_fail_cache[use_index].retry_after_ms = now_ms + ttl_ms;
+}
+
+static void online_fail_cache_clear_nolock(int z, int x, int y)
+{
+    for (int i = 0; i < ONLINE_FAIL_CACHE_SIZE; i++)
+    {
+        online_fail_cache_entry_t *e = &g_online_fail_cache[i];
+        if (e->valid && e->z == z && e->x == x && e->y == y)
+        {
+            e->valid = false;
+            return;
+        }
+    }
+}
+
+static bool online_tile_queue_insert_nolock(int z, int x, int y, int attempts, uint64_t retry_after_tick, bool count_as_enqueue)
+{
+    int free_index = -1;
+
+    for (int i = 0; i < ONLINE_TILE_QUEUE_SIZE; i++)
+    {
+        if (g_online_tile_queue[i].valid)
+        {
+            if (g_online_tile_queue[i].z == z && g_online_tile_queue[i].x == x && g_online_tile_queue[i].y == y)
+            {
+                g_online_queue_dedup_skips++;
+                return false;
+            }
+        }
+        else if (free_index < 0)
+        {
+            free_index = i;
+        }
+    }
+
+    if (free_index < 0)
+    {
+        g_online_queue_full_skips++;
+        return false;
+    }
+
+    g_online_tile_queue[free_index].valid = true;
+    g_online_tile_queue[free_index].z = z;
+    g_online_tile_queue[free_index].x = x;
+    g_online_tile_queue[free_index].y = y;
+    g_online_tile_queue[free_index].attempts = attempts;
+    g_online_tile_queue[free_index].retry_after_tick = retry_after_tick;
+    g_online_tile_queue[free_index].enqueue_seq = g_online_queue_enqueue_seq++;
+    g_online_tile_queue[free_index].enqueue_tick = g_online_tile_queue_tick;
+    if (count_as_enqueue)
+    {
+        g_online_queue_enqueued++;
+    }
+    return true;
+}
+
+static uint64_t online_tile_retry_backoff_ticks(int z, int x, int y, int attempts)
+{
+    // Base backoff (30/60/90) + deterministic jitter ile retry spike azaltma
+    uint64_t base = (uint64_t)attempts * 30ULL;
+    uint32_t seed = (uint32_t)(z * 73856093) ^ (uint32_t)(x * 19349663) ^ (uint32_t)(y * 83492791) ^ (uint32_t)(attempts * 2654435761U);
+    uint64_t jitter = (uint64_t)(seed % 19U); // 0..18 tick
+    return base + jitter;
+}
+
+static int online_queue_pending_count_nolock(void)
+{
+    int pending = 0;
+    for (int i = 0; i < ONLINE_TILE_QUEUE_SIZE; i++)
+    {
+        if (g_online_tile_queue[i].valid)
+        {
+            pending++;
+        }
+    }
+    return pending;
+}
+
+static uint32_t online_worker_dynamic_interval_ms(int pending, int fail_streak)
+{
+    uint32_t interval = 180U;
+
+    if (pending >= 64)
+    {
+        interval = 70U;
+    }
+    else if (pending >= 24)
+    {
+        interval = 95U;
+    }
+    else if (pending >= 8)
+    {
+        interval = 130U;
+    }
+
+    if (fail_streak > 0)
+    {
+        uint32_t penalty = (uint32_t)fail_streak * 14U;
+        interval += penalty;
+        if (interval > 320U)
+        {
+            interval = 320U;
+        }
+    }
+
+    return interval;
+}
+
+static uint32_t online_worker_dynamic_idle_delay_ms(int pending, bool cooldown_active, int fail_streak)
+{
+    if (cooldown_active)
+    {
+        uint32_t delay = 90U + (uint32_t)fail_streak * 10U;
+        if (delay > 220U)
+        {
+            delay = 220U;
+        }
+        return delay;
+    }
+
+    if (pending >= 48)
+    {
+        return 14U;
+    }
+    if (pending > 0)
+    {
+        return 30U;
+    }
+    return 120U;
+}
+
+static uint32_t online_tile_queue_apply_aging_bonus_nolock(uint32_t base_score, uint64_t enqueue_tick)
+{
+    // Worker processed-tick bazli aging: uzun sure bekleyen istekler ac kalmasin.
+    const uint32_t aging_bonus_per_tick = 64U;
+    const uint32_t max_aging_bonus = 20000U;
+
+    uint64_t waited = 0;
+    if (g_online_tile_queue_tick > enqueue_tick)
+    {
+        waited = g_online_tile_queue_tick - enqueue_tick;
+    }
+
+    uint64_t bonus64 = waited * (uint64_t)aging_bonus_per_tick;
+    if (bonus64 > max_aging_bonus)
+    {
+        bonus64 = max_aging_bonus;
+    }
+    uint32_t bonus = (uint32_t)bonus64;
+
+    if (bonus >= base_score)
+    {
+        return 0;
+    }
+    return base_score - bonus;
+}
+
+static uint32_t online_tile_queue_priority_score_nolock(int z, int x, int y)
+{
+    if (g_online_queue_focus_zoom < 0)
+    {
+        return UINT32_MAX / 4U;
+    }
+
+    int dz = abs(z - g_online_queue_focus_zoom);
+    int dx = abs(x - g_online_queue_focus_x);
+    int dy = abs(y - g_online_queue_focus_y);
+
+    uint64_t score = (uint64_t)dz * 4096ULL + (uint64_t)dx * (uint64_t)dx + (uint64_t)dy * (uint64_t)dy;
+    if (score > UINT32_MAX)
+    {
+        return UINT32_MAX;
+    }
+    return (uint32_t)score;
+}
+
+static void online_tile_queue_set_focus(int zoom, int x, int y)
+{
+    online_queue_lock();
+    g_online_queue_focus_zoom = zoom;
+    g_online_queue_focus_x = x;
+    g_online_queue_focus_y = y;
+    g_online_queue_focus_updates++;
+    online_queue_unlock();
+}
+
+static bool online_tile_queue_push_if_missing(int z, int x, int y)
+{
+    online_queue_lock();
+
+    if (online_fail_cache_contains_active_nolock(z, x, y))
+    {
+        g_online_queue_fail_cache_skips++;
+        online_queue_unlock();
+        return false;
+    }
+
+    bool ok = online_tile_queue_insert_nolock(z, x, y, 0, g_online_tile_queue_tick, true);
+    online_queue_unlock();
+    return ok;
+}
+
+static bool online_tile_queue_pop_ready_nolock(online_tile_job_t *out_job)
+{
+    if (!out_job)
+    {
+        return false;
+    }
+
+    int best_index = -1;
+    uint32_t best_score = UINT32_MAX;
+    uint64_t best_seq = UINT64_MAX;
+
+    for (int i = 0; i < ONLINE_TILE_QUEUE_SIZE; i++)
+    {
+        if (!g_online_tile_queue[i].valid)
+        {
+            continue;
+        }
+        if (g_online_tile_queue[i].retry_after_tick > g_online_tile_queue_tick)
+        {
+            continue;
+        }
+
+        uint32_t base_score = online_tile_queue_priority_score_nolock(g_online_tile_queue[i].z,
+                                           g_online_tile_queue[i].x,
+                                           g_online_tile_queue[i].y);
+        uint32_t score = online_tile_queue_apply_aging_bonus_nolock(base_score,
+                                         g_online_tile_queue[i].enqueue_tick);
+        uint64_t seq = g_online_tile_queue[i].enqueue_seq;
+
+        if (best_index < 0 || score < best_score || (score == best_score && seq < best_seq))
+        {
+            best_index = i;
+            best_score = score;
+            best_seq = seq;
+        }
+    }
+
+    if (best_index < 0)
+    {
+        return false;
+    }
+
+    out_job->z = g_online_tile_queue[best_index].z;
+    out_job->x = g_online_tile_queue[best_index].x;
+    out_job->y = g_online_tile_queue[best_index].y;
+    out_job->attempts = g_online_tile_queue[best_index].attempts;
+
+    uint32_t selected_base_score = online_tile_queue_priority_score_nolock(g_online_tile_queue[best_index].z,
+                                                                            g_online_tile_queue[best_index].x,
+                                                                            g_online_tile_queue[best_index].y);
+    uint32_t selected_aged_score = online_tile_queue_apply_aging_bonus_nolock(selected_base_score,
+                                                                                g_online_tile_queue[best_index].enqueue_tick);
+    if (selected_aged_score < selected_base_score)
+    {
+        g_online_queue_aged_picks++;
+    }
+
+    g_online_tile_queue[best_index].valid = false;
+    return true;
+}
+
+static int online_tile_worker_step(void)
+{
+    uint32_t now_ms = SDL_GetTicks();
+
+    if (now_ms < g_online_network_cooldown_until_ms)
+    {
+        return 0;
+    }
+
+    int pending = 0;
+    int fail_streak = 0;
+    online_queue_lock();
+    pending = online_queue_pending_count_nolock();
+    fail_streak = g_online_download_fail_streak;
+    online_queue_unlock();
+
+    uint32_t dynamic_interval = online_worker_dynamic_interval_ms(pending, fail_streak);
+    g_online_worker_interval_last_ms = dynamic_interval;
+
+    if (g_online_last_process_ms != 0 && (now_ms - g_online_last_process_ms) < dynamic_interval)
+    {
+        return 0;
+    }
+    g_online_last_process_ms = now_ms;
+
+    online_tile_job_t job = {};
+    bool has_job = false;
+
+    online_queue_lock();
+    has_job = online_tile_queue_pop_ready_nolock(&job);
+    online_queue_unlock();
+
+    if (!has_job)
+    {
+        return 0;
+    }
+
+    online_fetch_status_t fetch_status = ONLINE_FETCH_OK;
+    bool fetched = online_tile_fetch_and_cache("data/map_tiles", job.z, job.x, job.y, &fetch_status);
+
+    online_queue_lock();
+    g_online_tile_queue_tick++;
+    g_online_worker_processed_total++;
+
+    if (fetched)
+    {
+        g_online_fetch_success++;
+        g_online_download_fail_streak = 0;
+        g_online_network_cooldown_until_ms = 0;
+        online_fail_cache_clear_nolock(job.z, job.x, job.y);
+        (void)online_completion_enqueue_nolock(job.z, job.x, job.y);
+    }
+    else
+    {
+        g_tile_cache_online_attempts++;
+        g_online_fetch_fail_total++;
+        if (fetch_status == ONLINE_FETCH_FAIL_IO)
+        {
+            g_online_fetch_fail_io++;
+        }
+        else if (fetch_status == ONLINE_FETCH_FAIL_DOWNLOAD)
+        {
+            g_online_fetch_fail_download++;
+
+            // Ardışık download hatalarında kısa adaptif cooldown uygula
+            g_online_download_fail_streak++;
+            if (g_online_download_fail_streak > 12)
+            {
+                g_online_download_fail_streak = 12;
+            }
+
+            uint32_t cooldown_ms = (uint32_t)(250U * (uint32_t)g_online_download_fail_streak);
+            if (cooldown_ms > 3000U)
+            {
+                cooldown_ms = 3000U;
+            }
+            g_online_network_cooldown_until_ms = SDL_GetTicks() + cooldown_ms;
+            g_online_net_cooldown_events++;
+            g_online_net_cooldown_ms_total += (uint64_t)cooldown_ms;
+        }
+        else if (fetch_status == ONLINE_FETCH_FAIL_CONVERT)
+        {
+            g_online_fetch_fail_convert++;
+
+            // Convert sorunu network sorunu olmayabilir; streak'i yumusat.
+            if (g_online_download_fail_streak > 0)
+            {
+                g_online_download_fail_streak--;
+            }
+        }
+        else if (g_online_download_fail_streak > 0)
+        {
+            g_online_download_fail_streak--;
+        }
+
+        int next_attempts = job.attempts + 1;
+        if (next_attempts >= 3)
+        {
+            online_fail_cache_mark_nolock(job.z, job.x, job.y, ONLINE_FAIL_TTL_MS);
+        }
+        else
+        {
+            // Jitter'li backoff: 30/60/90 + deterministic jitter
+            uint64_t delay_ticks = online_tile_retry_backoff_ticks(job.z, job.x, job.y, next_attempts);
+            (void)online_tile_queue_insert_nolock(job.z,
+                                                  job.x,
+                                                  job.y,
+                                                  next_attempts,
+                                                  g_online_tile_queue_tick + delay_ticks,
+                                                  false);
+            g_online_queue_retry_requeues++;
+        }
+    }
+
+    online_queue_unlock();
+    return 1;
+}
+
+static int online_completion_drain_and_invalidate_cache(void)
+{
+    int drained = 0;
+    online_tile_completion_t item;
+
+    while (1)
+    {
+        online_queue_lock();
+        bool has_item = online_completion_dequeue_nolock(&item);
+        online_queue_unlock();
+
+        if (!has_item)
+        {
+            break;
+        }
+
+        drained++;
+        g_online_completion_drained++;
+
+        for (int i = 0; i < TILE_TEXTURE_CACHE_SIZE; i++)
+        {
+            if (!g_tile_texture_cache[i].valid)
+            {
+                continue;
+            }
+
+            if (g_tile_texture_cache[i].z == item.z &&
+                g_tile_texture_cache[i].x == item.x &&
+                g_tile_texture_cache[i].y == item.y)
+            {
+                if (g_tile_texture_cache[i].texture_id != 0)
+                {
+                    glDeleteTextures(1, &g_tile_texture_cache[i].texture_id);
+                }
+
+                g_tile_texture_cache[i].valid = false;
+                g_tile_texture_cache[i].missing = false;
+                g_tile_texture_cache[i].texture_id = 0;
+                g_tile_texture_cache[i].last_used_tick = 0;
+            }
+        }
+    }
+
+    return drained;
+}
+
+static int online_tile_worker_thread_fn(void *userdata)
+{
+    (void)userdata;
+
+    while (SDL_AtomicGet(&g_online_worker_stop) == 0)
+    {
+        int did_work = online_tile_worker_step();
+        if (did_work != 0)
+        {
+            SDL_Delay(6);
+            continue;
+        }
+
+        int pending = 0;
+        int fail_streak = 0;
+        bool cooldown_active = false;
+        uint32_t now_ms = SDL_GetTicks();
+        online_queue_lock();
+        pending = online_queue_pending_count_nolock();
+        fail_streak = g_online_download_fail_streak;
+        cooldown_active = (now_ms < g_online_network_cooldown_until_ms);
+        online_queue_unlock();
+
+        uint32_t idle_delay = online_worker_dynamic_idle_delay_ms(pending, cooldown_active, fail_streak);
+        g_online_worker_idle_delay_last_ms = idle_delay;
+        SDL_Delay(idle_delay);
+    }
+
+    return 0;
+}
+
+static void online_tile_queue_get_stats(int *pending_out,
+                                        uint64_t *processed_total_out,
+                                        uint64_t *enqueued_total_out,
+                                        uint64_t *success_total_out,
+                                        uint64_t *fail_total_out)
+{
+    int pending = 0;
+    uint64_t processed_total = 0;
+    uint64_t enqueued_total = 0;
+    uint64_t success_total = 0;
+    uint64_t fail_total = 0;
+
+    online_queue_lock();
+    for (int i = 0; i < ONLINE_TILE_QUEUE_SIZE; i++)
+    {
+        if (g_online_tile_queue[i].valid)
+        {
+            pending++;
+        }
+    }
+    processed_total = g_online_worker_processed_total;
+    enqueued_total = g_online_queue_enqueued;
+    success_total = g_online_fetch_success;
+    fail_total = g_online_fetch_fail_total;
+    online_queue_unlock();
+
+    if (pending_out)
+    {
+        *pending_out = pending;
+    }
+    if (processed_total_out)
+    {
+        *processed_total_out = processed_total;
+    }
+    if (enqueued_total_out)
+    {
+        *enqueued_total_out = enqueued_total;
+    }
+    if (success_total_out)
+    {
+        *success_total_out = success_total;
+    }
+    if (fail_total_out)
+    {
+        *fail_total_out = fail_total;
+    }
+}
 
 static GLuint map_tile_texture_get_or_load(const char *base_dir,
                                            const char *mbtiles_path,
@@ -160,6 +1418,15 @@ static GLuint map_tile_texture_get_or_load(const char *base_dir,
             if (g_tile_texture_cache[i].z == z && g_tile_texture_cache[i].x == x && g_tile_texture_cache[i].y == y)
             {
                 g_tile_texture_cache[i].last_used_tick = g_tile_texture_tick++;
+
+                // Missing placeholder cache hit: online fetch retries should continue.
+                // Otherwise a transient network failure can leave this tile stuck forever
+                // until cache eviction happens.
+                if (g_tile_texture_cache[i].missing && !offline_only)
+                {
+                    (void)online_tile_queue_push_if_missing(z, x, y);
+                }
+
                 g_tile_cache_hits++;
                 return g_tile_texture_cache[i].texture_id;
             }
@@ -227,8 +1494,8 @@ static GLuint map_tile_texture_get_or_load(const char *base_dir,
 
     if (!pixels && !offline_only)
     {
-        // Phase-5 placeholder: online fetch queue/fetcher will be integrated here.
-        g_tile_cache_online_attempts++;
+        // Phase-5 scaffold: immediate network yerine istek kuyruguna eklenir.
+        (void)online_tile_queue_push_if_missing(z, x, y);
     }
 
     g_tile_cache_misses++;
@@ -352,16 +1619,15 @@ int main(int argc, char **argv)
     // ImGui başlat
     ImGuiContext *ctx = igCreateContext(NULL);
     igSetCurrentContext(ctx);
+    gps_implot_create_context();
     ImGuiIO *io = cImGui_GetIO();
     io->ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io->IniFilename = "imgui.ini";
 
     // cimgui backend'lerini başlat
     cImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     cImGui_ImplOpenGL3_Init("#version 150");
-
-    // Setup custom style
-    setup_imgui_style();
 
     // Initialize application state
     app_state_t app_state;
@@ -376,11 +1642,17 @@ int main(int argc, char **argv)
     app_state.auto_scroll_log = true;
     app_state.active_tab = 0;
     app_state.show_gpx_export_dialog = false;
+    app_state.show_gpx_import_dialog = false;
+    app_state.show_csv_export_dialog = false;
     app_state.show_help_window = false;
     app_state.show_about_window = false;
     strcpy(app_state.connection_status_text, "Not Connected");
     app_state.last_error[0] = '\0';
     strcpy(app_state.gpx_filename, "data/gps_track.gpx");
+    strcpy(app_state.gpx_import_filename, "data/gps_track.gpx");
+    strcpy(app_state.csv_export_filename, "data/gps_track.csv");
+    app_state.gpx_import_message[0] = '\0';
+    app_state.csv_export_message[0] = '\0';
 
     // Initialize connection dialog state
     app_state.show_connection_dialog = false;
@@ -388,15 +1660,46 @@ int main(int argc, char **argv)
     strcpy(app_state.selected_port, "");
     app_state.selected_baud = 9600;
     app_state.available_port_count = 0;
+    app_state.recent_connection_count = 0;
+    app_state.selected_recent_index = -1;
+    app_state.use_light_theme = false;
+
+    gps_config_t app_config;
+    bool has_config = gps_config_load("data/gpc_config.ini", &app_config);
+    if (!has_config)
+    {
+        gps_config_init_defaults(&app_config);
+    }
+    app_state_apply_config(&app_state, &app_config);
+
+    // Setup theme after config is loaded
+    setup_imgui_style(app_state.use_light_theme);
+
+    g_online_queue_mutex = SDL_CreateMutex();
+    SDL_AtomicSet(&g_online_worker_stop, 0);
+    if (g_online_queue_mutex)
+    {
+        g_online_worker_thread = SDL_CreateThread(online_tile_worker_thread_fn,
+                                                  "gpc-online-tile-worker",
+                                                  NULL);
+    }
 
     bool done = false;
     ImVec4 clear_color = {0.11f, 0.11f, 0.11f, 1.00f}; // Dark background
 
+    // Dynamic FPS control (v3.2): active ~60 FPS, idle ~15 FPS
+    const uint32_t frame_target_active_ms = 16U;
+    const uint32_t frame_target_idle_ms = 66U;
+
     while (!done)
     {
+        uint32_t frame_begin_ms = SDL_GetTicks();
+
         SDL_Event event;
+        bool had_input_event = false;
         while (SDL_PollEvent(&event))
         {
+            had_input_event = true;
             cImGui_ImplSDL2_ProcessEvent(&event);
             if (event.type == SDL_QUIT)
                 done = true;
@@ -446,10 +1749,13 @@ int main(int argc, char **argv)
         render_polar_window(&app_state);
         render_compass_window(&app_state);
         render_raw_data_window(&app_state);
+        render_analysis_window(&app_state);
 
         render_status_bar(&app_state);
         render_connection_dialog(&app_state);
         render_gpx_export_dialog(&app_state);
+        render_gpx_import_dialog(&app_state);
+        render_csv_export_dialog(&app_state);
 
         // Help and About windows
         if (app_state.show_help_window)
@@ -476,6 +1782,31 @@ int main(int argc, char **argv)
         glClear(GL_COLOR_BUFFER_BIT);
         cImGui_ImplOpenGL3_RenderDrawData(igGetDrawData());
         SDL_GL_SwapWindow(window);
+
+        // Basit idle tespiti: etkileşim/bağlantı/iş yükü yoksa düşük FPS'e geç.
+        int online_pending = online_tile_queue_pending_count();
+        bool has_foreground_activity = had_input_event ||
+                                       app_state.show_connection_dialog ||
+                                       app_state.show_gpx_export_dialog ||
+                                       app_state.show_gpx_import_dialog ||
+                                       app_state.show_csv_export_dialog ||
+                                       app_state.show_help_window ||
+                                       app_state.show_about_window ||
+                                       app_state.show_demo_window;
+        bool has_background_activity = gps_serial_is_open(&app_state.gps_serial) ||
+                                       app_state.gps_data.logging_enabled ||
+                                       app_state.map_system.track.recording ||
+                                       (online_pending > 0);
+
+        uint32_t frame_target_ms = (has_foreground_activity || has_background_activity)
+                                       ? frame_target_active_ms
+                                       : frame_target_idle_ms;
+
+        uint32_t frame_elapsed_ms = SDL_GetTicks() - frame_begin_ms;
+        if (frame_elapsed_ms < frame_target_ms)
+        {
+            SDL_Delay(frame_target_ms - frame_elapsed_ms);
+        }
     }
 
     // Cleanup
@@ -486,11 +1817,28 @@ int main(int argc, char **argv)
     compass_cleanup(&app_state.compass);
     console_cleanup(&app_state.console);
     map_tile_texture_cache_cleanup();
+    SDL_AtomicSet(&g_online_worker_stop, 1);
+    if (g_online_worker_thread)
+    {
+        SDL_WaitThread(g_online_worker_thread, NULL);
+        g_online_worker_thread = NULL;
+    }
+    if (g_online_queue_mutex)
+    {
+        SDL_DestroyMutex(g_online_queue_mutex);
+        g_online_queue_mutex = NULL;
+    }
+
+    // Persist configuration before subsystem shutdown mutates state.
+    app_state_fill_config(&app_state, &app_config);
+    (void)gps_config_save("data/gpc_config.ini", &app_config);
+
     map_mbtiles_shutdown();
     poi_db_shutdown();
 
     cImGui_ImplOpenGL3_Shutdown();
     cImGui_ImplSDL2_Shutdown();
+    gps_implot_destroy_context();
     igDestroyContext(ctx);
     SDL_GL_DeleteContext(gl_context);
     SDL_DestroyWindow(window);
@@ -499,9 +1847,26 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void setup_imgui_style(void)
+void setup_imgui_style(bool use_light_theme)
 {
     ImGuiStyle *style = igGetStyle();
+
+    if (use_light_theme)
+    {
+        igStyleColorsLight(style);
+        style->WindowRounding = 6.0f;
+        style->ChildRounding = 4.0f;
+        style->FrameRounding = 4.0f;
+        style->PopupRounding = 4.0f;
+        style->ScrollbarRounding = 6.0f;
+        style->GrabRounding = 4.0f;
+        style->TabRounding = 4.0f;
+        style->WindowPadding = (ImVec2){10.0f, 10.0f};
+        style->FramePadding = (ImVec2){8.0f, 4.0f};
+        style->ItemSpacing = (ImVec2){8.0f, 6.0f};
+        style->ItemInnerSpacing = (ImVec2){6.0f, 4.0f};
+        return;
+    }
 
     // Colors based on NOTE.md specifications
     style->Colors[ImGuiCol_WindowBg] = (ImVec4){0.17f, 0.17f, 0.17f, 1.00f}; // #2B2B2B
@@ -577,11 +1942,27 @@ void render_header_bar(app_state_t *app)
                             app->gps_data.status = GPS_STATUS_CONNECTED;
                             strcpy(app->gps_data.port_name, ports[0]);
                             app->gps_data.baud_rate = 9600;
+                            connection_history_add(app, ports[0], 9600);
                             snprintf(app->connection_status_text, sizeof(app->connection_status_text),
                                      "Auto-connected to %s", ports[0]);
                         }
                     }
                 }
+            }
+            igEndMenu();
+        }
+
+        if (igBeginMenu("View", true))
+        {
+            if (igMenuItem_Bool("Dark Theme", NULL, !app->use_light_theme, true))
+            {
+                app->use_light_theme = false;
+                setup_imgui_style(false);
+            }
+            if (igMenuItem_Bool("Light Theme", NULL, app->use_light_theme, true))
+            {
+                app->use_light_theme = true;
+                setup_imgui_style(true);
             }
             igEndMenu();
         }
@@ -605,6 +1986,14 @@ void render_header_bar(app_state_t *app)
             if (igMenuItem_Bool("Export GPX...", NULL, false, app->map_system.track.point_count > 0))
             {
                 app->show_gpx_export_dialog = true;
+            }
+            if (igMenuItem_Bool("Import GPX...", NULL, false, true))
+            {
+                app->show_gpx_import_dialog = true;
+            }
+            if (igMenuItem_Bool("Export CSV (Analysis)...", NULL, false, app->map_system.track.point_count > 0))
+            {
+                app->show_csv_export_dialog = true;
             }
             igSeparator();
             if (igMenuItem_Bool("Start Logging", NULL, false, !app->gps_data.logging_enabled))
@@ -640,6 +2029,18 @@ void render_header_bar(app_state_t *app)
             if (igMenuItem_Bool("About", NULL, false, true))
             {
                 app->show_about_window = true;
+            }
+
+            igSeparator();
+            if (igBeginMenu("Keyboard Shortcuts (Tips)", true))
+            {
+                igMenuItem_Bool("Open Connection Dialog", "Cmd/Ctrl+K", false, false);
+                igMenuItem_Bool("Open Help", "F1", false, false);
+                igMenuItem_Bool("Map Zoom", "Mouse Wheel", false, false);
+                igMenuItem_Bool("Map Pan", "Middle Mouse + Drag", false, false);
+                igMenuItem_Bool("Add Waypoint", "Right Click (Map)", false, false);
+                igMenuItem_Bool("Send Console Command", "Enter", false, false);
+                igEndMenu();
             }
             igEndMenu();
         }
@@ -774,6 +2175,11 @@ void render_enhanced_map_panel(app_state_t *app)
 {
     gps_data_t *gps = &app->gps_data;
     map_system_t *map = &app->map_system;
+    bool has_track_points = (map->track.point_count > 0);
+    static bool show_poi_markers = true;
+    static char poi_filter_text[64] = "";
+    static bool show_poi_detail_popup = false;
+    static poi_item_t selected_poi = {};
 
     // Map controls
     igText("Map Controls:");
@@ -791,48 +2197,67 @@ void render_enhanced_map_panel(app_state_t *app)
             map_system_stop_recording(map);
         }
     }
+    ui_show_tooltip("Track kaydini ac/kapat");
 
     igSameLine(0, 20);
-    if (igButton("Clear Track", (ImVec2){0, 0}))
+    if (!has_track_points)
+        igPushStyleVar_Float(ImGuiStyleVar_Alpha, 0.45f);
+    if (igButton("Clear Track", (ImVec2){0, 0}) && has_track_points)
     {
         map_system_clear_track(map);
     }
+    if (!has_track_points)
+        igPopStyleVar(1);
+    ui_show_tooltip(has_track_points ? "Kayitli izleri temizler" : "Temizlenecek track yok");
 
     igSameLine(0, 20);
-    if (igButton("Fit Track", (ImVec2){0, 0}) && map->track.point_count > 0)
+    if (!has_track_points)
+        igPushStyleVar_Float(ImGuiStyleVar_Alpha, 0.45f);
+    if (igButton("Fit Track", (ImVec2){0, 0}) && has_track_points)
     {
         map_system_zoom_to_fit_track(map);
     }
+    if (!has_track_points)
+        igPopStyleVar(1);
+    ui_show_tooltip(has_track_points ? "Tum track'i gorunecek sekilde zoom ayarlar" : "Zoom to fit icin track gerekli");
 
     igSameLine(0, 20);
     if (igCheckbox("Auto Center", &map->view.auto_center))
     {
         // Toggle handled by checkbox
     }
+    ui_show_tooltip("GPS konumu geldiginde haritayi otomatik merkeze alir");
 
     igSameLine(0, 20);
     igCheckbox("Offline Only", &map->view.offline_only);
+    ui_show_tooltip("Acilinca online tile denemelerini devre disi birakir");
 
     igSameLine(0, 20);
     igCheckbox("Prefer MBTiles", &map->view.prefer_mbtiles);
+    ui_show_tooltip("Tile yuklemede MBTiles kaynagini once dener");
 
     // Zoom controls
     igText("Zoom: %.2fx", map->view.zoom_level);
+    igSameLine(0, 20);
+    igText("Center: %.5f, %.5f", map->view.center_lat, map->view.center_lon);
     igSameLine(0, 20);
     if (igButton("Zoom In", (ImVec2){0, 0}))
     {
         map_system_set_zoom(map, map->view.zoom_level * 1.5);
     }
+    ui_show_tooltip("Haritayi yakinlastir");
     igSameLine(0, 10);
     if (igButton("Zoom Out", (ImVec2){0, 0}))
     {
         map_system_set_zoom(map, map->view.zoom_level / 1.5);
     }
+    ui_show_tooltip("Haritayi uzaklastir");
     igSameLine(0, 10);
     if (igButton("Reset Zoom", (ImVec2){0, 0}))
     {
         map_system_set_zoom(map, 10.0); // 1.0 yerine 10.0
     }
+    ui_show_tooltip("Zoom seviyesini varsayilana dondurur");
 
     // Track statistics
     if (map->track.point_count > 0)
@@ -917,6 +2342,12 @@ void render_enhanced_map_panel(app_state_t *app)
     // Tile-aware background (MVP): show local tile coverage using Web-Mercator tile math
     int tile_zoom = map_tiles_resolve_zoom_level(map->view.zoom_level);
     tile_range_t tile_range = map_view_visible_tile_range(&map->view, canvas_size.x, canvas_size.y, tile_zoom);
+
+    int focus_tx = 0;
+    int focus_ty = 0;
+    map_lat_lon_to_tile(map->view.center_lat, map->view.center_lon, tile_zoom, &focus_tx, &focus_ty);
+    online_tile_queue_set_focus(tile_zoom, focus_tx, focus_ty);
+
     bool rendered_tile_blocks = false;
 
     if (tile_range.valid)
@@ -984,6 +2415,12 @@ void render_enhanced_map_panel(app_state_t *app)
     }
 
     int poi_in_view = 0;
+    enum
+    {
+        POI_RENDER_MAX = 128
+    };
+    poi_item_t poi_items[POI_RENDER_MAX];
+    int poi_render_count = 0;
     if (tile_range.valid)
     {
         double lat_nw, lon_nw, lat_se, lon_se;
@@ -996,7 +2433,27 @@ void render_enhanced_map_panel(app_state_t *app)
         double max_lon = fmax(lon_nw, lon_se);
 
         poi_in_view = poi_db_count_bbox("data/map_db.sqlite", min_lat, min_lon, max_lat, max_lon);
+        if (show_poi_markers)
+        {
+            poi_render_count = poi_db_load_bbox("data/map_db.sqlite",
+                                                min_lat,
+                                                min_lon,
+                                                max_lat,
+                                                max_lon,
+                                                poi_items,
+                                                POI_RENDER_MAX);
+        }
     }
+
+    // POI Controls
+    igText("POI Controls:");
+    igSameLine(0, 12);
+    igCheckbox("Show POI", &show_poi_markers);
+    ui_show_tooltip("POI markerlarini goster/gizle");
+    igSameLine(0, 12);
+    igSetNextItemWidth(180.0f);
+    igInputText("POI Filter", poi_filter_text, sizeof(poi_filter_text), ImGuiInputTextFlags_None, NULL, NULL);
+    ui_show_tooltip("Isme gore filtre (case-insensitive)");
 
     // Fallback grid when no tile blocks are rendered
     if (!rendered_tile_blocks)
@@ -1017,8 +2474,20 @@ void render_enhanced_map_panel(app_state_t *app)
     }
 
     // Lightweight debug text for tile state
-    char tile_debug[196];
-    snprintf(tile_debug, sizeof(tile_debug), "Tile Z:%d [%d..%d, %d..%d] H:%llu M:%llu F:%llu MB:%llu/%llu OA:%llu POI:%d",
+    char tile_debug[360];
+    int completion_drained = online_completion_drain_and_invalidate_cache();
+    int online_pending = 0;
+    uint64_t online_processed_total = 0;
+    uint64_t online_enqueued_total = 0;
+    uint64_t online_success_total = 0;
+    uint64_t online_fail_total = 0;
+    online_tile_queue_get_stats(&online_pending,
+                                &online_processed_total,
+                                &online_enqueued_total,
+                                &online_success_total,
+                                &online_fail_total);
+
+    snprintf(tile_debug, sizeof(tile_debug), "Tile Z:%d [%d..%d, %d..%d] H:%llu M:%llu F:%llu MB:%llu/%llu OA:%llu OQ:%llu OQP:%d OP:%llu OE:%llu OD:%llu OX:%llu OFC:%llu OFU:%llu OAG:%llu ORR:%llu ONC:%llu/%llu/%d OWI:%u OWD:%u OC:%llu/%llu/%d OS:%llu OF:%llu[%llu/%llu/%llu] POI:%d",
              tile_zoom,
              tile_range.min_x,
              tile_range.max_x,
@@ -1030,6 +2499,29 @@ void render_enhanced_map_panel(app_state_t *app)
              (unsigned long long)g_tile_cache_mbtiles_reads,
              (unsigned long long)g_tile_cache_mbtiles_decodes,
              (unsigned long long)g_tile_cache_online_attempts,
+             (unsigned long long)online_enqueued_total,
+             online_pending,
+             (unsigned long long)online_processed_total,
+             (unsigned long long)g_online_queue_enqueued,
+             (unsigned long long)g_online_queue_dedup_skips,
+             (unsigned long long)g_online_queue_full_skips,
+             (unsigned long long)g_online_queue_fail_cache_skips,
+             (unsigned long long)g_online_queue_focus_updates,
+             (unsigned long long)g_online_queue_aged_picks,
+             (unsigned long long)g_online_queue_retry_requeues,
+             (unsigned long long)g_online_net_cooldown_events,
+             (unsigned long long)g_online_net_cooldown_ms_total,
+             g_online_download_fail_streak,
+             g_online_worker_interval_last_ms,
+             g_online_worker_idle_delay_last_ms,
+             (unsigned long long)g_online_completion_enqueued,
+             (unsigned long long)g_online_completion_dropped,
+             completion_drained,
+             (unsigned long long)online_success_total,
+             (unsigned long long)online_fail_total,
+             (unsigned long long)g_online_fetch_fail_io,
+             (unsigned long long)g_online_fetch_fail_download,
+             (unsigned long long)g_online_fetch_fail_convert,
              poi_in_view);
     ImDrawList_AddText_Vec2(draw_list,
                             (ImVec2){canvas_pos.x + 10, canvas_pos.y + canvas_size.y - 20},
@@ -1102,6 +2594,106 @@ void render_enhanced_map_panel(app_state_t *app)
         }
     }
 
+    // Draw POI markers from map_db.sqlite (MVP)
+    bool poi_right_click_consumed = false;
+    if (show_poi_markers && poi_render_count > 0)
+    {
+        ImVec2 mouse_pos;
+        igGetMousePos(&mouse_pos);
+        bool mouse_in_canvas = (mouse_pos.x >= canvas_pos.x && mouse_pos.x <= canvas_pos.x + canvas_size.x &&
+                                mouse_pos.y >= canvas_pos.y && mouse_pos.y <= canvas_pos.y + canvas_size.y);
+
+        int hovered_poi_index = -1;
+        float hovered_dist_sq = 999999.0f;
+
+        for (int i = 0; i < poi_render_count; i++)
+        {
+            const poi_item_t *poi = &poi_items[i];
+
+            float poi_x, poi_y;
+            map_lat_lon_to_screen(&map->view, poi->latitude, poi->longitude,
+                                  canvas_size.x, canvas_size.y, &poi_x, &poi_y);
+
+            poi_x += canvas_pos.x;
+            poi_y += canvas_pos.y;
+
+            if (poi_x < canvas_pos.x - 8.0f || poi_x > canvas_pos.x + canvas_size.x + 8.0f ||
+                poi_y < canvas_pos.y - 8.0f || poi_y > canvas_pos.y + canvas_size.y + 8.0f)
+            {
+                continue;
+            }
+
+            ImU32 poi_outer = igGetColorU32_Vec4((ImVec4){0.06f, 0.06f, 0.06f, 0.95f});
+            ImU32 poi_inner = igGetColorU32_Vec4((ImVec4){0.95f, 0.35f, 0.15f, 1.0f});
+            const char *poi_name = (poi->name[0] != '\0') ? poi->name : "(Unnamed POI)";
+            if (!str_contains_case_insensitive(poi_name, poi_filter_text))
+            {
+                continue;
+            }
+
+            ImDrawList_AddCircleFilled(draw_list, (ImVec2){poi_x, poi_y}, 4.5f, poi_outer, 12);
+            ImDrawList_AddCircleFilled(draw_list, (ImVec2){poi_x, poi_y}, 3.0f, poi_inner, 12);
+
+            float dx = mouse_pos.x - poi_x;
+            float dy = mouse_pos.y - poi_y;
+            float d2 = dx * dx + dy * dy;
+            if (d2 < 49.0f && d2 < hovered_dist_sq)
+            {
+                hovered_dist_sq = d2;
+                hovered_poi_index = i;
+            }
+        }
+
+        if (hovered_poi_index >= 0)
+        {
+            const poi_item_t *poi = &poi_items[hovered_poi_index];
+            const char *poi_name = (poi->name[0] != '\0') ? poi->name : "(Unnamed POI)";
+            igSetTooltip("POI: %s\nLat: %.6f\nLon: %.6f\nSol tik: merkeze al",
+                         poi_name,
+                         poi->latitude,
+                         poi->longitude);
+
+            if (mouse_in_canvas && igIsMouseClicked_Bool(ImGuiMouseButton_Left, false))
+            {
+                map_system_set_center(map, poi->latitude, poi->longitude);
+                map->view.auto_center = false;
+            }
+
+            if (mouse_in_canvas && igIsMouseClicked_Bool(ImGuiMouseButton_Right, false))
+            {
+                selected_poi = *poi;
+                show_poi_detail_popup = true;
+                poi_right_click_consumed = true;
+                igOpenPopup_Str("POI Details", ImGuiPopupFlags_None);
+            }
+        }
+    }
+
+    if (show_poi_detail_popup && igBeginPopupModal("POI Details", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        const char *poi_name = (selected_poi.name[0] != '\0') ? selected_poi.name : "(Unnamed POI)";
+        igText("POI: %s", poi_name);
+        igText("Lat: %.6f", selected_poi.latitude);
+        igText("Lon: %.6f", selected_poi.longitude);
+        if (selected_poi.category[0] != '\0')
+        {
+            igText("Category: %s", selected_poi.category);
+        }
+        igSeparator();
+        if (igButton("Center", (ImVec2){80, 0}))
+        {
+            map_system_set_center(map, selected_poi.latitude, selected_poi.longitude);
+            map->view.auto_center = false;
+        }
+        igSameLine(0, 10);
+        if (igButton("Close", (ImVec2){80, 0}))
+        {
+            show_poi_detail_popup = false;
+            igCloseCurrentPopup();
+        }
+        igEndPopup();
+    }
+
     // Draw current position
     if (gps->position_valid)
     {
@@ -1169,12 +2761,45 @@ void render_enhanced_map_panel(app_state_t *app)
         // Handle click events (future: add waypoints, etc.)
     }
 
+    if (igIsItemHovered(ImGuiHoveredFlags_None))
+    {
+        ImVec2 mouse_pos;
+        igGetMousePos(&mouse_pos);
+
+        float local_x = mouse_pos.x - canvas_pos.x;
+        float local_y = mouse_pos.y - canvas_pos.y;
+
+        double hover_lat, hover_lon;
+        map_screen_to_lat_lon(&map->view, local_x, local_y,
+                              canvas_size.x, canvas_size.y,
+                              &hover_lat, &hover_lon);
+
+        char hover_text[96];
+        snprintf(hover_text, sizeof(hover_text), "Mouse: %.6f, %.6f", hover_lat, hover_lon);
+        ImVec2 hover_size;
+        igCalcTextSize(&hover_size, hover_text, NULL, false, -1.0f);
+
+        ImVec2 text_pos = {canvas_pos.x + canvas_size.x - hover_size.x - 14.0f, canvas_pos.y + 10.0f};
+        ImU32 hover_bg = igGetColorU32_Vec4((ImVec4){0.0f, 0.0f, 0.0f, 0.55f});
+        ImDrawList_AddRectFilled(draw_list,
+                                 (ImVec2){text_pos.x - 4.0f, text_pos.y - 2.0f},
+                                 (ImVec2){text_pos.x + hover_size.x + 4.0f, text_pos.y + hover_size.y + 2.0f},
+                                 hover_bg, 3.0f, ImDrawFlags_RoundCornersAll);
+        ImDrawList_AddText_Vec2(draw_list, text_pos,
+                                igGetColorU32_Vec4((ImVec4){0.9f, 0.95f, 1.0f, 1.0f}),
+                                hover_text, NULL);
+
+        igSetTooltip("Sag tik: Waypoint ekle | Orta tus + surukle: Pan | Mouse wheel: Zoom");
+    }
+
     static double pending_wp_lat = 0.0;
     static double pending_wp_lon = 0.0;
     static char pending_wp_name[64] = "";
 
     // Right-click to open waypoint add popup
-    if (igIsItemHovered(ImGuiHoveredFlags_None) && igIsMouseClicked_Bool(ImGuiMouseButton_Right, false))
+    if (igIsItemHovered(ImGuiHoveredFlags_None) &&
+        igIsMouseClicked_Bool(ImGuiMouseButton_Right, false) &&
+        !poi_right_click_consumed)
     {
         ImVec2 mouse_pos;
         igGetMousePos(&mouse_pos);
@@ -1619,6 +3244,148 @@ void render_raw_data_window(app_state_t *app)
     igEnd();
 }
 
+void render_analysis_window(app_state_t *app)
+{
+    igSetNextWindowSize((ImVec2){720, 560}, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){LEFT_PANEL_WIDTH + 640, 400}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+
+    if (igBegin("Analytics", NULL, ImGuiWindowFlags_None))
+    {
+        render_analysis_panel(app);
+    }
+    igEnd();
+}
+
+void render_analysis_panel(app_state_t *app)
+{
+    track_analysis_summary_t summary;
+    static double speed_time_minutes[MAX_TRACK_POINTS];
+    static double speed_kmh[MAX_TRACK_POINTS];
+    static double distance_km[MAX_TRACK_POINTS];
+    static double altitude_m[MAX_TRACK_POINTS];
+
+    gps_analysis_compute_track_summary(&app->map_system, &summary);
+
+    igText("Track Analyzer");
+    igSeparator();
+
+    if (!summary.has_track)
+    {
+        igTextColored((ImVec4){0.75f, 0.75f, 0.75f, 1.0f}, "No recorded track data yet.");
+        igText("Start Recording from Tools menu to collect metrics and charts.");
+        return;
+    }
+
+    igText("Points: %d", summary.point_count);
+    igText("Distance: %.2f km", summary.total_distance_km);
+    igText("Duration: %02d:%02d:%02d",
+           (int)(summary.duration_seconds / 3600.0),
+           (int)(((int)summary.duration_seconds % 3600) / 60),
+           (int)((int)summary.duration_seconds % 60));
+    igText("Average Speed: %.1f km/h", summary.average_speed_kmh);
+    igText("Max Speed: %.1f km/h", summary.max_speed_kmh);
+    igText("Altitude Range: %.1f m .. %.1f m", summary.min_altitude_m, summary.max_altitude_m);
+
+    igSeparator();
+
+    int speed_point_count = gps_analysis_build_speed_time_series(&app->map_system,
+                                                                 speed_time_minutes,
+                                                                 speed_kmh,
+                                                                 MAX_TRACK_POINTS);
+    int altitude_point_count = gps_analysis_build_altitude_distance_series(&app->map_system,
+                                                                           distance_km,
+                                                                           altitude_m,
+                                                                           MAX_TRACK_POINTS);
+
+    static bool reset_speed_axes = false;
+    static bool reset_altitude_axes = false;
+
+    if (igButton("Reset Speed Plot", (ImVec2){130, 0}))
+    {
+        reset_speed_axes = true;
+    }
+    igSameLine(0, 10);
+    if (igButton("Reset Altitude Plot", (ImVec2){150, 0}))
+    {
+        reset_altitude_axes = true;
+    }
+    igSameLine(0, 10);
+    igTextDisabled("Tip: mouse wheel=zoom, drag=pan");
+
+    igSeparator();
+
+    if (speed_point_count > 1)
+    {
+        if (reset_speed_axes)
+        {
+            gps_implot_set_next_axes_to_fit();
+            reset_speed_axes = false;
+        }
+        if (gps_implot_begin_plot("Speed vs Time",
+                                  -1.0f,
+                                  190.0f,
+                                  "Elapsed Time (min)",
+                                  "Speed (km/h)",
+                                  GPS_IMPLOT_FLAG_NO_LEGEND,
+                                  GPS_IMPLOT_AXIS_FLAG_AUTO_FIT,
+                                  GPS_IMPLOT_AXIS_FLAG_AUTO_FIT))
+        {
+            gps_implot_plot_line("Speed", speed_time_minutes, speed_kmh, speed_point_count);
+            if (gps_implot_is_plot_hovered())
+            {
+                double mx = 0.0;
+                double my = 0.0;
+                if (gps_implot_get_plot_mouse_pos(&mx, &my))
+                {
+                    igText("Cursor: t=%.2f min, v=%.2f km/h", mx, my);
+                }
+            }
+            gps_implot_end_plot();
+        }
+    }
+    else
+    {
+        igTextColored((ImVec4){0.75f, 0.75f, 0.75f, 1.0f}, "Speed graph will appear after at least two recorded samples.");
+    }
+
+    if (altitude_point_count > 1)
+    {
+        if (reset_altitude_axes)
+        {
+            gps_implot_set_next_axes_to_fit();
+            reset_altitude_axes = false;
+        }
+        if (gps_implot_begin_plot("Altitude vs Distance",
+                                  -1.0f,
+                                  190.0f,
+                                  "Distance (km)",
+                                  "Altitude (m)",
+                                  GPS_IMPLOT_FLAG_NO_LEGEND,
+                                  GPS_IMPLOT_AXIS_FLAG_AUTO_FIT,
+                                  GPS_IMPLOT_AXIS_FLAG_AUTO_FIT))
+        {
+            gps_implot_plot_line("Altitude", distance_km, altitude_m, altitude_point_count);
+            if (gps_implot_is_plot_hovered())
+            {
+                double mx = 0.0;
+                double my = 0.0;
+                if (gps_implot_get_plot_mouse_pos(&mx, &my))
+                {
+                    igText("Cursor: d=%.2f km, h=%.2f m", mx, my);
+                }
+            }
+            gps_implot_end_plot();
+        }
+    }
+    else
+    {
+        igTextColored((ImVec4){0.75f, 0.75f, 0.75f, 1.0f}, "Altitude graph will appear after at least two recorded samples.");
+    }
+
+    igSeparator();
+    igTextWrapped("Charts are rendered with vendored ImPlot and automatically follow the current Dear ImGui theme.");
+}
+
 void render_raw_data_panel(app_state_t *app)
 {
     gps_data_t *gps = &app->gps_data;
@@ -1646,9 +3413,12 @@ void render_raw_data_panel(app_state_t *app)
     }
 
     igSameLine(0, 20);
+    bool can_send_command = gps_serial_is_open(&app->gps_serial);
+    if (!can_send_command)
+        igPushStyleVar_Float(ImGuiStyleVar_Alpha, 0.45f);
     if (igButton("Request Version", (ImVec2){0, 0}))
     {
-        if (gps_serial_send_command(&app->gps_serial, "$PMTK605*31"))
+        if (can_send_command && gps_serial_send_command(&app->gps_serial, "$PMTK605*31"))
         {
             console_add_line(console, ">>> $PMTK605*31 (Request firmware version)");
         }
@@ -1657,11 +3427,16 @@ void render_raw_data_panel(app_state_t *app)
             console_add_line(console, "Error: Failed to send command");
         }
     }
+    if (!can_send_command)
+        igPopStyleVar(1);
+    ui_show_tooltip(can_send_command ? "GPS firmware bilgisini ister" : "Komut icin once GPS baglantisi gerekli");
 
     igSameLine(0, 20);
+    if (!can_send_command)
+        igPushStyleVar_Float(ImGuiStyleVar_Alpha, 0.45f);
     if (igButton("Reset Config", (ImVec2){0, 0}))
     {
-        if (gps_serial_send_command(&app->gps_serial, "$PMTK104*37"))
+        if (can_send_command && gps_serial_send_command(&app->gps_serial, "$PMTK104*37"))
         {
             console_add_line(console, ">>> $PMTK104*37 (Cold restart)");
         }
@@ -1670,6 +3445,9 @@ void render_raw_data_panel(app_state_t *app)
             console_add_line(console, "Error: Failed to send command");
         }
     }
+    if (!can_send_command)
+        igPopStyleVar(1);
+    ui_show_tooltip(can_send_command ? "GPS aliciyi cold restart eder" : "Komut icin once GPS baglantisi gerekli");
 
     igSeparator();
 
@@ -1843,6 +3621,132 @@ void render_gpx_export_dialog(app_state_t *app)
     igEnd();
 }
 
+void render_gpx_import_dialog(app_state_t *app)
+{
+    if (!app->show_gpx_import_dialog)
+        return;
+
+    bool open = app->show_gpx_import_dialog;
+    if (igBegin("Import GPX", &open, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        igText("Import GPX track into current analysis context");
+        igSeparator();
+
+        igText("Filename:");
+        igInputText("##import_filename", app->gpx_import_filename, sizeof(app->gpx_import_filename),
+                    ImGuiInputTextFlags_None, NULL, NULL);
+
+        igTextWrapped("Import operation clears current in-memory track and replaces it with GPX points.");
+
+        igSeparator();
+        if (igButton("Import", (ImVec2){80, 0}))
+        {
+            bool success = map_system_load_gpx(&app->map_system, app->gpx_import_filename);
+            app->gpx_import_success = success;
+            if (success)
+            {
+                snprintf(app->gpx_import_message, sizeof(app->gpx_import_message),
+                         "GPX imported successfully from %s", app->gpx_import_filename);
+            }
+            else
+            {
+                snprintf(app->gpx_import_message, sizeof(app->gpx_import_message),
+                         "Failed to import GPX file: %s", app->gpx_import_filename);
+            }
+            app->show_gpx_import_dialog = false;
+        }
+
+        igSameLine(0, 10);
+        if (igButton("Cancel", (ImVec2){80, 0}))
+        {
+            app->show_gpx_import_dialog = false;
+        }
+
+        if (strlen(app->gpx_import_message) > 0)
+        {
+            igSeparator();
+            if (app->gpx_import_success)
+            {
+                igTextColored((ImVec4){0.0f, 1.0f, 0.0f, 1.0f}, "%s", app->gpx_import_message);
+            }
+            else
+            {
+                igTextColored((ImVec4){1.0f, 0.0f, 0.0f, 1.0f}, "%s", app->gpx_import_message);
+            }
+        }
+    }
+
+    if (!open)
+    {
+        app->show_gpx_import_dialog = false;
+    }
+
+    igEnd();
+}
+
+void render_csv_export_dialog(app_state_t *app)
+{
+    if (!app->show_csv_export_dialog)
+        return;
+
+    bool open = app->show_csv_export_dialog;
+    if (igBegin("Export CSV (Analysis)", &open, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        igText("Export current track analysis data to CSV");
+        igSeparator();
+
+        igText("Filename:");
+        igInputText("##csv_filename", app->csv_export_filename, sizeof(app->csv_export_filename),
+                    ImGuiInputTextFlags_None, NULL, NULL);
+
+        igText("Track points: %d", app->map_system.track.point_count);
+
+        igSeparator();
+        if (igButton("Export", (ImVec2){80, 0}))
+        {
+            bool success = map_system_export_track_csv(&app->map_system, app->csv_export_filename);
+            app->csv_export_success = success;
+            if (success)
+            {
+                snprintf(app->csv_export_message, sizeof(app->csv_export_message),
+                         "CSV exported successfully to %s", app->csv_export_filename);
+            }
+            else
+            {
+                snprintf(app->csv_export_message, sizeof(app->csv_export_message),
+                         "Failed to export CSV file: %s", app->csv_export_filename);
+            }
+            app->show_csv_export_dialog = false;
+        }
+
+        igSameLine(0, 10);
+        if (igButton("Cancel", (ImVec2){80, 0}))
+        {
+            app->show_csv_export_dialog = false;
+        }
+
+        if (strlen(app->csv_export_message) > 0)
+        {
+            igSeparator();
+            if (app->csv_export_success)
+            {
+                igTextColored((ImVec4){0.0f, 1.0f, 0.0f, 1.0f}, "%s", app->csv_export_message);
+            }
+            else
+            {
+                igTextColored((ImVec4){1.0f, 0.0f, 0.0f, 1.0f}, "%s", app->csv_export_message);
+            }
+        }
+    }
+
+    if (!open)
+    {
+        app->show_csv_export_dialog = false;
+    }
+
+    igEnd();
+}
+
 void render_satellite_window(app_state_t *app)
 {
     // Set default size for satellite window
@@ -1961,6 +3865,15 @@ void render_satellite_panel(app_state_t *app)
 
                     // Reserve space for the bar
                     igDummy((ImVec2){bar_width, bar_height});
+                    if (igIsItemHovered(ImGuiHoveredFlags_None))
+                    {
+                        igSetTooltip("PRN %d | Elev %d° | Azim %d° | SNR %d dB | Used: %s",
+                                     sat->prn,
+                                     sat->elevation,
+                                     sat->azimuth,
+                                     sat->snr,
+                                     sat->used_in_fix ? "Yes" : "No");
+                    }
                 }
                 else
                 {
@@ -2009,7 +3922,12 @@ void render_status_bar(app_state_t *app)
         igText("Port: %s", gps->port_name);
 
         igSameLine(0, 20);
-        igText("Fix: %s", gps_fix_quality_to_string(gps->fix_quality));
+        ImVec4 fix_color = (gps->fix_quality == GPS_FIX_NONE)
+                       ? (ImVec4){1.0f, 0.35f, 0.35f, 1.0f}
+                       : ((gps->fix_quality == GPS_FIX_DGPS || gps->fix_quality == GPS_FIX_RTK || gps->fix_quality == GPS_FIX_FLOAT_RTK)
+                          ? (ImVec4){0.35f, 1.0f, 0.35f, 1.0f}
+                          : (ImVec4){1.0f, 0.9f, 0.35f, 1.0f});
+        igTextColored(fix_color, "Fix: %s", gps_fix_quality_to_string(gps->fix_quality));
 
         igSameLine(0, 20);
         igText("Sats: %d", gps->satellites_used);
@@ -2083,6 +4001,46 @@ void render_connection_dialog(app_state_t *app)
                 app->selected_baud = baud_values[current_baud_index];
             }
 
+            if (app->recent_connection_count > 0)
+            {
+                igSpacing();
+                igText("Recent Port/Baud:");
+
+                char recent_labels[CONNECTION_HISTORY_SIZE][320];
+                const char *recent_items[CONNECTION_HISTORY_SIZE];
+
+                for (int i = 0; i < app->recent_connection_count; i++)
+                {
+                    snprintf(recent_labels[i], sizeof(recent_labels[i]), "%s @ %d", app->recent_connections[i].port,
+                             app->recent_connections[i].baud);
+                    recent_items[i] = recent_labels[i];
+                }
+
+                if (app->selected_recent_index < 0 || app->selected_recent_index >= app->recent_connection_count)
+                {
+                    app->selected_recent_index = 0;
+                }
+
+                int recent_index = app->selected_recent_index;
+                if (igCombo_Str_arr("##recent_conn", &recent_index, recent_items, app->recent_connection_count, 5))
+                {
+                    app->selected_recent_index = recent_index;
+                    strcpy(app->selected_port, app->recent_connections[recent_index].port);
+                    app->selected_baud = app->recent_connections[recent_index].baud;
+                }
+
+                if (igButton("Use Recent", (ImVec2){110, 0}))
+                {
+                    int idx = app->selected_recent_index;
+                    if (idx >= 0 && idx < app->recent_connection_count)
+                    {
+                        strcpy(app->selected_port, app->recent_connections[idx].port);
+                        app->selected_baud = app->recent_connections[idx].baud;
+                    }
+                }
+                ui_show_tooltip("Secili son baglanti port/baud bilgisini forma uygular");
+            }
+
             igSeparator();
 
             // Auto-connect checkbox
@@ -2103,6 +4061,7 @@ void render_connection_dialog(app_state_t *app)
                     app->gps_data.status = GPS_STATUS_CONNECTED;
                     strcpy(app->gps_data.port_name, app->selected_port);
                     app->gps_data.baud_rate = app->selected_baud;
+                    connection_history_add(app, app->selected_port, app->selected_baud);
                     snprintf(app->connection_status_text, sizeof(app->connection_status_text),
                              "Connected to %s at %d baud", app->selected_port, app->selected_baud);
                     app->show_connection_dialog = false;
@@ -2161,6 +4120,7 @@ void render_connection_dialog(app_state_t *app)
                 app->gps_data.status = GPS_STATUS_CONNECTED;
                 strcpy(app->gps_data.port_name, ports[0]);
                 app->gps_data.baud_rate = 9600;
+                connection_history_add(app, ports[0], 9600);
                 snprintf(app->connection_status_text, sizeof(app->connection_status_text),
                          "Auto-connected to %s", ports[0]);
             }

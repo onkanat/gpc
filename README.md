@@ -14,6 +14,7 @@ USB porttan bağlanan GPS cihazlarının verilerinin görüntülenmesi ve takibi
 - **GPS GUI Uygulaması**: SDL2 + OpenGL tabanlı modern arayüz ile gerçek zamanlı GPS veri görüntüleme
 - **NMEA Parser**: Güvenilir minmea tabanlı GPS veri ayrıştırma motoru
 - **Grafik Arayüz**: Dear ImGui tabanlı kullanıcı dostu kontrol paneli
+- **ImPlot Analytics**: Vendor edilen ImPlot ile gerçek zamanlı çizgi grafikler
 - **Veri Kayıt Sistemi**: Ham NMEA verileri ve işlenmiş GPS bilgilerinin kaydı
 - **Modüler Mimari**: Compass, Console, Map, Polar view ayrı modüller halinde
 - **Connection Management**: GPS cihaz bağlantı dialoğu ve otomatik bağlantı sistemi
@@ -59,15 +60,19 @@ Manuel derleme:
 
 ```bash
 g++ -Wall -Wextra -std=c++11 \
-    -I src/cimgui -I src/cimgui/imgui -I src/cimgui/imgui/backends -I src/include \
-    src/gps_gui.c src/include/minmea.c \
+    -I src/cimgui -I src/cimgui/imgui -I src/cimgui/imgui/backends -I src/include -I src/third_party/implot \
+    src/gps_gui.c src/gps_implot.cpp src/include/minmea.c src/include/gps_data.c src/include/gps_serial.c \
+    src/include/gps_map.c src/include/gps_polar.c src/include/gps_compass.c src/include/gps_console.c \
+    src/include/tools.c src/include/gps_tiles.c src/include/gps_tile_loader.c src/include/gps_mbtiles.c \
+    src/include/gps_poi.c src/include/gps_config.c src/include/gps_analysis.c \
+    src/third_party/implot/implot.cpp src/third_party/implot/implot_items.cpp \
     src/cimgui/cimgui.cpp src/cimgui/cimgui_impl.cpp \
     src/cimgui/imgui/imgui.cpp src/cimgui/imgui/imgui_draw.cpp \
     src/cimgui/imgui/imgui_tables.cpp src/cimgui/imgui/imgui_widgets.cpp \
     src/cimgui/imgui/imgui_demo.cpp \
     src/cimgui/imgui/backends/imgui_impl_sdl2.cpp \
     src/cimgui/imgui/backends/imgui_impl_opengl3.cpp \
-    `sdl2-config --cflags --libs` -framework OpenGL -o gps_gui
+    `sdl2-config --cflags --libs` -framework OpenGL -framework ImageIO -framework CoreGraphics -framework CoreFoundation -lsqlite3 -o gps_gui
 ```
 
 Çıktı: `gps_gui` ikilisi kök dizinde oluşur.
@@ -89,12 +94,20 @@ GUI uygulamasını başlatmak için:
 - **Offline Tile Pipeline**: Disk BMP + MBTiles tile_data (BMP) okuma ve cache
 - **MBTiles Uyum Katmanı**: `metadata.scheme` (tms/xyz) + otomatik fallback probing
 - **POI DB Scaffold**: `data/map_db.sqlite` üzerinden bbox bazlı POI sayımı (debug overlay)
+- **POI Overlay (MVP)**: Harita üstünde POI marker çizimi + hover tooltip + tıkla merkeze alma + isim filtresi + temel detay popup
 - **Tile Source Controls**: Offline-only ve MBTiles önceliği seçenekleri
 - **Track Kayıt Sistemi**: GPS rotanızı kaydedin ve GPX formatında export edin
+- **GPX Import (MVP)**: Harici GPX track verisini analize yükleme
+- **CSV Export (Analysis)**: Track ve türetilmiş metrikleri CSV olarak dışa aktarma
+- **Analytics Charts**: Speed vs Time ve Altitude vs Distance grafikleri
+    - hover cursor readout + zoom/pan reset UX
 - **Sky Plot**: Uyduların gök kubbesindeki konumunu polar koordinat sisteminde görün
 - **Digital Compass**: GPS yön bilgisi ile otomatik pusula ve magnetic declination
 - **Raw Data Console**: NMEA komut gönderme ve ham veri izleme
 - **Connection Dialog**: GPS cihaz seçimi, baud rate ayarlama ve auto-connect
+- **Connection History (Mini)**: Connection dialog içinde son kullanılan port/baud geçmişi
+- **Keyboard Shortcut Tips**: Help menüsünde kısayol/ipucu listesi
+- **Vendored ImPlot**: `src/third_party/implot/` altında commit `1351ab2` ile sabitlenmiş plot katmanı
 - **Data Management**: Organize dosya sistemi ile data/ klasöründe veri saklama
 - **Veri Kayıt**: GPS verilerinin dosyaya kaydedilmesi
 - **Tab-based Interface**: Telemetry, Map, Satellites, Sky Plot, Compass, Raw Data sekmeleri
@@ -111,6 +124,7 @@ GUI uygulamasını başlatmak için:
 - **Track Görüntüleme**: GPS rotanızın real-time çizimi
 - **Auto-center**: GPS pozisyonunu otomatik takip
 - **Grid System**: Referans çizgileri ile konum belirleme
+- **Context Waypoint**: Haritada sağ tık ile waypoint ekleme popup'ı
 
 #### 📊 **Track Yönetimi**
 
@@ -163,6 +177,7 @@ GUI uygulamasını başlatmak için:
 - **Connection Status**: Real-time bağlantı durumu ve hata gösterimi
 - **Manual Disconnect**: Menu'den temiz bağlantı koparma
 - **Error Handling**: Bağlantı hatalarının kullanıcı dostu gösterimi
+- **Recent Port/Baud**: Son kullanılan bağlantıların hızlı tekrar seçimi
 
 ### 🔧 **v3.1 Güncellemeleri - Connection Management**
 
@@ -399,16 +414,21 @@ Bu bölümde belirtilen özellikler uygulanırken [NOTE.md](NOTE.md) dosyasında
 - [x] Pusula ve yön göstergesici(tasarım polar view ile benzer olmalı dairesel ve pusula şeklinde) ilave TAB compass ✅
 - [x] GPS cihaz konfigürasyon seçenekleri ve ham veri izleme konsolu max beş satır görüntüleme ayrıca en altta seri cihaza komut gönderme.ilave TAB raw data ✅
 - [x] GPS Connection Dialog ve Auto-connect sistemi ✅
-- [ ] Kullanıcı arayüzü iyileştirmeleri ve kontroller
+- [x] Dynamic FPS control (idle/active frame pacing) ✅
+- [x] Config sistemi (tema/baud/tile tercihleri + layout kalıcılığı) ✅
+- [x] Threaded NMEA parsing + güvenli veri aktarım kuyruğu ✅
+- [x] Track Analyzer summary paneli (mesafe/süre/ortalama hız) ✅
+- [~] Kullanıcı arayüzü iyileştirmeleri ve kontroller (tooltips, kısayol ipuçları, mini geçmiş + tema geçişi + kalıcılık ile ilerliyor)
 
 ### Orta Vadeli (Sıradaki Geliştirmeler)
 
 - [ ] Gelişmiş waypoint yönetimi ve navigation
 - [ ] Route planning özellikleri
 - [x] Harita tile sistemi ve offline maps (disk + MBTiles BMP) ✅
-- [ ] Online tile indirme/fetch kuyruğu (hazırlık hook mevcut)
-- [~] POI/vektör DB altyapısı (bbox count hazır, marker render sonraki adım)
+- [~] Online tile indirme/fetch kuyruğu (gelişmiş telemetri + dedup/retry + fail-cache TTL + araç-yetenek cache + arka plan worker thread + dinamik pacing + adaptif polling + viewport-priority pop + aging/fairness + retry-jitter + adaptive-net-cooldown + completion/invalidation + PNG-cache-success + native move fallback + MVP fetch/cache aktif; optional libpng + macOS native decode hazır, tam platform bağımsız decode hattı olgunlaştırması beklemede)
+- [~] POI/vektör DB altyapısı (bbox count + marker render + temel etkileşim + isim filtresi + popup hazır, kategori/arama sonraki adım)
 - [ ] Track analiz araçları (elevation profil, speed chart)
+- [~] Track analiz araçları (summary panel hazır; elevation/speed chart ve grafikler beklemede)
 - [ ] Çoklu GPS cihaz desteği
 - [ ] Gelişmiş veri filtreleme ve smoothing
 

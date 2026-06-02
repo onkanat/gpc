@@ -14,8 +14,13 @@
 - ✅ **Telemetri Paneli**: Hız, yükseklik, koordinat bilgileri
 - ✅ **Ham Veri Konsolu**: NMEA mesajları ve komut gönderimi
 - ✅ **GPS Logging**: Veri kaydetme ve GPX dışa aktarma
-- 🔄 **Harita Görselleştirme**: OpenStreetMap entegrasyonu (geliştiriliyor)
-- 🔄 **Pusula ve Sky Plot**: Gelişmiş navigasyon araçları
+- ✅ **Harita Görselleştirme**: Zoom/pan/track + tile cache + MBTiles desteği
+- ✅ **Pusula ve Sky Plot**: Gelişmiş navigasyon panelleri
+- ✅ **POI Overlay (MVP)**: Marker, filtre ve temel etkileşim
+- 🔄 **Online Tile Queue**: Worker thread + retry/backoff + completion/invalidation
+- ✅ **Config Kalıcılığı**: Tema/baud/tile tercihleri ve layout ayarları saklanır
+- ✅ **Threaded NMEA Parsing**: Serial okuma/parsing UI thread'den ayrıldı
+- ✅ **Track Analytics (Summary + Charts)**: Mesafe, süre, ortalama hız ve ImPlot tabanlı grafik paneli
 
 ### Teknik Bilgiler
 
@@ -24,13 +29,15 @@
 - **Graphics API**: OpenGL 3.3+
 - **Platform**: SDL2 (çoklu platform desteği)
 - **GPS Protokolü**: NMEA 0183
-- **Lisans**: MIT / "Use it, Fix it, Add to it" License
+- **Harita Veri Katmanı**: Disk tile + MBTiles (SQLite)
+- **Plot Katmanı**: Vendor ImPlot (`src/third_party/implot`, commit `1351ab2`)
+- **Lisans**: MIT + proje içi katkı lisans metni
 
 ### Geliştirici
 
 - **Proje**: GPC GPS Console
 - **Repository**: [github.com/onkanat/gpc](https://github.com/onkanat/gpc)
-- **Versiyon**: 0.1.0 (Alpha)
+- **Durum**: Aktif geliştirme (Alpha)
 
 ---
 
@@ -52,6 +59,7 @@ memnuniyetle karşılar.
 - **Dear ImGui**: Omar Cornut ve katkıda bulunanlar
 - **SDL2**: Sam Lantinga ve SDL Development Team  
 - **cimgui**: Sonoro1234 ve katkıda bulunanlar
+- **ImPlot**: Evan Pezent, Breno Cunha Queiroz ve katkıda bulunanlar
 - **minmea**: Kosma Moczek - NMEA parser library
 
 ---

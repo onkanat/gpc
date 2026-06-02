@@ -44,6 +44,13 @@ typedef struct {
     int selected_satellite;      // -1 if none
     bool hover_active;
     float hover_x, hover_y;
+
+    // Dirty state
+    bool data_dirty;
+    bool layout_dirty;
+    time_t last_gps_update;
+    int last_input_satellite_count;
+    unsigned int dirty_revision;
     
 } polar_view_t;
 

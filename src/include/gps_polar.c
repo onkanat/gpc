@@ -9,6 +9,15 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+static void polar_view_mark_dirty(polar_view_t* polar, bool layout_dirty) {
+    if (!polar) return;
+    polar->data_dirty = true;
+    if (layout_dirty) {
+        polar->layout_dirty = true;
+    }
+    polar->dirty_revision++;
+}
+
 void polar_view_init(polar_view_t* polar) {
     if (!polar) return;
     
@@ -30,6 +39,11 @@ void polar_view_init(polar_view_t* polar) {
     polar->max_snr = 0.0f;
     polar->selected_satellite = -1;
     polar->hover_active = false;
+    polar->data_dirty = true;
+    polar->layout_dirty = true;
+    polar->last_gps_update = 0;
+    polar->last_input_satellite_count = -1;
+    polar->dirty_revision = 1;
 }
 
 void polar_view_cleanup(polar_view_t* polar) {
@@ -39,6 +53,13 @@ void polar_view_cleanup(polar_view_t* polar) {
 
 void polar_view_update(polar_view_t* polar, const gps_data_t* gps_data) {
     if (!polar || !gps_data) return;
+
+    if (!polar->layout_dirty &&
+        polar->last_gps_update == gps_data->last_update &&
+        polar->last_input_satellite_count == gps_data->satellite_count)
+    {
+        return;
+    }
     
     // Reset counters
     polar->satellite_count = 0;
@@ -92,14 +113,24 @@ void polar_view_update(polar_view_t* polar, const gps_data_t* gps_data) {
     if (polar->satellites_visible > 0) {
         polar->average_snr /= polar->satellites_visible;
     }
+
+    polar->last_gps_update = gps_data->last_update;
+    polar->last_input_satellite_count = gps_data->satellite_count;
+    polar->data_dirty = false;
+    polar->layout_dirty = false;
 }
 
 void polar_view_set_size(polar_view_t* polar, float center_x, float center_y, float radius) {
     if (!polar) return;
     
+    if (polar->config.center_x == center_x && polar->config.center_y == center_y && polar->config.radius == radius) {
+        return;
+    }
+
     polar->config.center_x = center_x;
     polar->config.center_y = center_y;
     polar->config.radius = radius;
+    polar_view_mark_dirty(polar, true);
     
     // Recalculate all satellite positions
     for (int i = 0; i < polar->satellite_count; i++) {
@@ -110,6 +141,9 @@ void polar_view_set_size(polar_view_t* polar, float center_x, float center_y, fl
             &sat->screen_x, &sat->screen_y
         );
     }
+
+    polar->layout_dirty = false;
+    polar->data_dirty = false;
 }
 
 void polar_view_azimuth_elevation_to_screen(float azimuth, float elevation, 

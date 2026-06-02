@@ -131,7 +131,7 @@ Aşağıdaki görsel, bu layout’un genel görünümünü temsil eder:
 
 ---
 
-## 10. Geliştirme Notları (2026-05-22)
+## 10. Geliştirme Notları (2026-05-23)
 
 Bu bölüm, harita altyapısındaki yeni teknik kararları ve uygulama sonuçlarını özetler.
 
@@ -145,6 +145,9 @@ Bu bölüm, harita altyapısındaki yeni teknik kararları ve uygulama sonuçlar
 - Tile texture cache + negative cache + telemetri sayaçları eklendi.
 - Map panelde `Offline Only` ve `Prefer MBTiles` kontrolleri eklendi.
 - POI DB için başlangıç modülü eklendi (`gps_poi.h/c`) ve bbox count sorgusu map debug overlay'e bağlandı.
+- Help menüsüne "Keyboard Shortcuts (Tips)" alt menüsü eklendi.
+- Connection dialog'a son kullanılan port/baud mini geçmişi (son 5 kayıt) eklendi.
+- Status bar fix kalitesi renk kodlaması iyileştirildi.
 
 ### Mimari Kararlar
 
@@ -153,6 +156,7 @@ Bu bölüm, harita altyapısındaki yeni teknik kararları ve uygulama sonuçlar
   - Disk BMP -> MBTiles BMP (varsayılan)
   - MBTiles BMP -> Disk BMP (Prefer MBTiles açıkken)
 - Online fetch henüz uygulanmadı; non-blocking hook noktası hazırlandı.
+- Bağlantı geçmişi bellek içi tutuluyor (MRU tarzı: son kullanılan üste taşınır).
 
 ### Doğrulama
 
@@ -164,3 +168,9 @@ Bu bölüm, harita altyapısındaki yeni teknik kararları ve uygulama sonuçlar
 - MBTiles `tile_data` için PNG/JPEG decode desteği.
 - Online tile fetch queue ve cache yazma mekanizması.
 - POI marker render + seçme/zoom UX geliştirmesi.
+
+### UI/UX Notları
+
+- Menü üstünden temel etkileşimler için kısayol/ipucu görünürlüğü artırıldı.
+- Bağlantı tekrarlarında port/baud seçimini hızlandırmak için mini geçmiş eklendi.
+- Tooltips ve disabled-state görsel dili tutarlı hale getirildi.

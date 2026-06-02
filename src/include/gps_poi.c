@@ -15,15 +15,20 @@
 typedef struct {
     sqlite3* db;
     sqlite3_stmt* stmt_count_bbox;
+    sqlite3_stmt* stmt_select_bbox;
     char db_path[512];
 } poi_ctx_t;
 
-static poi_ctx_t g_poi_ctx = {NULL, NULL, {0}};
+static poi_ctx_t g_poi_ctx = {};
 
 static void poi_close_cached(void) {
     if (g_poi_ctx.stmt_count_bbox) {
         sqlite3_finalize(g_poi_ctx.stmt_count_bbox);
         g_poi_ctx.stmt_count_bbox = NULL;
+    }
+    if (g_poi_ctx.stmt_select_bbox) {
+        sqlite3_finalize(g_poi_ctx.stmt_select_bbox);
+        g_poi_ctx.stmt_select_bbox = NULL;
     }
     if (g_poi_ctx.db) {
         sqlite3_close(g_poi_ctx.db);
@@ -50,7 +55,18 @@ bool poi_db_init(const char* db_path) {
         "SELECT COUNT(*) FROM places "
         "WHERE latitude>=? AND latitude<=? AND longitude>=? AND longitude<=?;";
 
+    const char* sql_select =
+        "SELECT rowid, latitude, longitude, COALESCE(name, ''), '' "
+        "FROM places "
+        "WHERE latitude>=? AND latitude<=? AND longitude>=? AND longitude<=? "
+        "LIMIT ?;";
+
     if (sqlite3_prepare_v2(g_poi_ctx.db, sql_count, -1, &g_poi_ctx.stmt_count_bbox, NULL) != SQLITE_OK) {
+        poi_close_cached();
+        return false;
+    }
+
+    if (sqlite3_prepare_v2(g_poi_ctx.db, sql_select, -1, &g_poi_ctx.stmt_select_bbox, NULL) != SQLITE_OK) {
         poi_close_cached();
         return false;
     }
@@ -87,6 +103,57 @@ int poi_db_count_bbox(const char* db_path,
     return count;
 }
 
+int poi_db_load_bbox(const char* db_path,
+                     double min_lat,
+                     double min_lon,
+                     double max_lat,
+                     double max_lon,
+                     poi_item_t* out_items,
+                     int max_items) {
+    if (!out_items || max_items <= 0) return 0;
+    if (!poi_db_init(db_path)) return 0;
+    if (!g_poi_ctx.stmt_select_bbox) return 0;
+
+    sqlite3_reset(g_poi_ctx.stmt_select_bbox);
+    sqlite3_clear_bindings(g_poi_ctx.stmt_select_bbox);
+
+    if (sqlite3_bind_double(g_poi_ctx.stmt_select_bbox, 1, min_lat) != SQLITE_OK) return 0;
+    if (sqlite3_bind_double(g_poi_ctx.stmt_select_bbox, 2, max_lat) != SQLITE_OK) return 0;
+    if (sqlite3_bind_double(g_poi_ctx.stmt_select_bbox, 3, min_lon) != SQLITE_OK) return 0;
+    if (sqlite3_bind_double(g_poi_ctx.stmt_select_bbox, 4, max_lon) != SQLITE_OK) return 0;
+    if (sqlite3_bind_int(g_poi_ctx.stmt_select_bbox, 5, max_items) != SQLITE_OK) return 0;
+
+    int count = 0;
+    while (count < max_items) {
+        int rc = sqlite3_step(g_poi_ctx.stmt_select_bbox);
+        if (rc == SQLITE_ROW) {
+            poi_item_t* item = &out_items[count];
+            memset(item, 0, sizeof(*item));
+
+            item->id = sqlite3_column_int(g_poi_ctx.stmt_select_bbox, 0);
+            item->latitude = sqlite3_column_double(g_poi_ctx.stmt_select_bbox, 1);
+            item->longitude = sqlite3_column_double(g_poi_ctx.stmt_select_bbox, 2);
+
+            const unsigned char* name = sqlite3_column_text(g_poi_ctx.stmt_select_bbox, 3);
+            const unsigned char* category = sqlite3_column_text(g_poi_ctx.stmt_select_bbox, 4);
+
+            if (name) {
+                snprintf(item->name, sizeof(item->name), "%s", (const char*)name);
+            }
+            if (category) {
+                snprintf(item->category, sizeof(item->category), "%s", (const char*)category);
+            }
+
+            count++;
+        } else {
+            break;
+        }
+    }
+
+    sqlite3_reset(g_poi_ctx.stmt_select_bbox);
+    return count;
+}
+
 #else
 bool poi_db_init(const char* db_path) {
     (void)db_path;
@@ -106,6 +173,23 @@ int poi_db_count_bbox(const char* db_path,
     (void)min_lon;
     (void)max_lat;
     (void)max_lon;
+    return 0;
+}
+
+int poi_db_load_bbox(const char* db_path,
+                     double min_lat,
+                     double min_lon,
+                     double max_lat,
+                     double max_lon,
+                     poi_item_t* out_items,
+                     int max_items) {
+    (void)db_path;
+    (void)min_lat;
+    (void)min_lon;
+    (void)max_lat;
+    (void)max_lon;
+    (void)out_items;
+    (void)max_items;
     return 0;
 }
 #endif

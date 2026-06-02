@@ -28,5 +28,12 @@ int poi_db_count_bbox(const char* db_path,
                       double min_lon,
                       double max_lat,
                       double max_lon);
+int poi_db_load_bbox(const char* db_path,
+                     double min_lat,
+                     double min_lon,
+                     double max_lat,
+                     double max_lon,
+                     poi_item_t* out_items,
+                     int max_items);
 
 #endif // GPS_POI_H

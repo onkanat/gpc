@@ -85,8 +85,10 @@ void gps_data_update_from_rmc(gps_data_t* data, const struct minmea_sentence_rmc
         data->last_update = time(NULL);
     } else {
         data->invalid_sentences++;
-        data->position_valid = false;
+        // RMC geçersizse yalnızca hareket/zaman verilerini sıfırla;
+        // GGA'dan gelen position_valid değerine dokunma
         data->motion_valid = false;
+        data->time_valid = false;
     }
 }
 
@@ -96,16 +98,21 @@ void gps_data_update_from_gga(gps_data_t* data, const struct minmea_sentence_gga
     data->total_sentences++;
     data->valid_sentences++;
     
-    // Position
-    data->latitude = minmea_tocoord(&gga->latitude);
-    data->longitude = minmea_tocoord(&gga->longitude);
-    data->altitude = minmea_tofloat(&gga->altitude);
-    
-    // Fix quality
+    // Fix quality (parse before position so position_valid is set correctly)
     data->fix_quality = (gps_fix_quality_t)gga->fix_quality;
     data->satellites_used = gga->satellites_tracked;
     data->hdop = minmea_tofloat(&gga->hdop);
-    
+
+    // Position - only mark valid when GGA reports an actual fix
+    if (gga->fix_quality > 0) {
+        data->latitude = minmea_tocoord(&gga->latitude);
+        data->longitude = minmea_tocoord(&gga->longitude);
+        data->altitude = minmea_tofloat(&gga->altitude);
+        data->position_valid = true;
+    } else {
+        data->position_valid = false;
+    }
+
     data->last_update = time(NULL);
 }
 

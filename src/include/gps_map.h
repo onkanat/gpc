@@ -80,6 +80,10 @@ typedef struct {
     // Statistics
     double track_bounds_min_lat, track_bounds_max_lat;
     double track_bounds_min_lon, track_bounds_max_lon;
+
+    // Dirty flag state
+    bool dirty;
+    unsigned int dirty_revision;
 } map_system_t;
 
 // Function declarations
@@ -96,7 +100,12 @@ void map_system_zoom_to_fit_track(map_system_t* map);
 int map_system_add_waypoint(map_system_t* map, double lat, double lon, const char* name);
 void map_system_remove_waypoint(map_system_t* map, int index);
 bool map_system_save_gpx(const map_system_t* map, const char* filename);
+bool map_system_load_gpx(map_system_t* map, const char* filename);
+bool map_system_export_track_csv(const map_system_t* map, const char* filename);
 double map_system_calculate_distance(double lat1, double lon1, double lat2, double lon2);
+bool map_system_is_dirty(const map_system_t* map);
+unsigned int map_system_get_dirty_revision(const map_system_t* map);
+void map_system_clear_dirty(map_system_t* map);
 
 // Coordinate conversion functions
 void map_lat_lon_to_screen(const map_view_t* view, double lat, double lon, 

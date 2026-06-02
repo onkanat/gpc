@@ -14,6 +14,139 @@
 #include <sys/ioctl.h>
 #include <dirent.h>
 
+static void process_nmea_sentence(const char* sentence, gps_data_t* gps_data, void* console_ptr);
+
+static void gps_serial_queue_lock(gps_serial_t* serial) {
+    if (serial && serial->queue_mutex) {
+        SDL_LockMutex(serial->queue_mutex);
+    }
+}
+
+static void gps_serial_queue_unlock(gps_serial_t* serial) {
+    if (serial && serial->queue_mutex) {
+        SDL_UnlockMutex(serial->queue_mutex);
+    }
+}
+
+static bool gps_serial_enqueue_update(gps_serial_t* serial, const gps_data_t* snapshot, const char* raw_line) {
+    if (!serial || !snapshot || !raw_line) return false;
+
+    gps_serial_queue_lock(serial);
+    if (serial->update_queue_count >= GPS_SERIAL_UPDATE_QUEUE_SIZE) {
+        serial->dropped_updates++;
+        gps_serial_queue_unlock(serial);
+        return false;
+    }
+
+    gps_serial_update_t* slot = &serial->update_queue[serial->update_queue_tail];
+    memset(slot, 0, sizeof(*slot));
+    slot->valid = true;
+    slot->snapshot = *snapshot;
+    slot->snapshot.log_file = NULL;
+    strncpy(slot->raw_line, raw_line, sizeof(slot->raw_line) - 1);
+    slot->raw_line[sizeof(slot->raw_line) - 1] = '\0';
+
+    serial->update_queue_tail = (serial->update_queue_tail + 1) % GPS_SERIAL_UPDATE_QUEUE_SIZE;
+    serial->update_queue_count++;
+    gps_serial_queue_unlock(serial);
+    return true;
+}
+
+static bool gps_serial_dequeue_update(gps_serial_t* serial, gps_serial_update_t* out_update) {
+    if (!serial || !out_update) return false;
+
+    gps_serial_queue_lock(serial);
+    if (serial->update_queue_count <= 0) {
+        gps_serial_queue_unlock(serial);
+        return false;
+    }
+
+    *out_update = serial->update_queue[serial->update_queue_head];
+    serial->update_queue[serial->update_queue_head].valid = false;
+    serial->update_queue_head = (serial->update_queue_head + 1) % GPS_SERIAL_UPDATE_QUEUE_SIZE;
+    serial->update_queue_count--;
+    gps_serial_queue_unlock(serial);
+    return true;
+}
+
+static void gps_serial_apply_snapshot(gps_data_t* target, const gps_serial_update_t* update) {
+    if (!target || !update) return;
+
+    bool logging_enabled = target->logging_enabled;
+    FILE* log_file = target->log_file;
+    char log_filename[256];
+    gps_connection_status_t status = target->status;
+    char port_name[256];
+    int baud_rate = target->baud_rate;
+
+    strncpy(log_filename, target->log_filename, sizeof(log_filename) - 1);
+    log_filename[sizeof(log_filename) - 1] = '\0';
+    strncpy(port_name, target->port_name, sizeof(port_name) - 1);
+    port_name[sizeof(port_name) - 1] = '\0';
+
+    *target = update->snapshot;
+    target->logging_enabled = logging_enabled;
+    target->log_file = log_file;
+    strncpy(target->log_filename, log_filename, sizeof(target->log_filename) - 1);
+    target->log_filename[sizeof(target->log_filename) - 1] = '\0';
+    target->status = status;
+    target->baud_rate = baud_rate;
+    strncpy(target->port_name, port_name, sizeof(target->port_name) - 1);
+    target->port_name[sizeof(target->port_name) - 1] = '\0';
+}
+
+static int gps_serial_worker_thread_fn(void* userdata) {
+    gps_serial_t* serial = (gps_serial_t*)userdata;
+    if (!serial) return 0;
+
+    while (SDL_AtomicGet(&serial->worker_stop) == 0) {
+        ssize_t bytes_read = read(serial->fd,
+                                  serial->buffer + serial->buffer_pos,
+                                  sizeof(serial->buffer) - serial->buffer_pos - 1);
+
+        if (bytes_read < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                SDL_Delay(10);
+                continue;
+            }
+            SDL_Delay(20);
+            continue;
+        }
+
+        if (bytes_read == 0) {
+            SDL_Delay(10);
+            continue;
+        }
+
+        serial->buffer_pos += (int)bytes_read;
+        serial->buffer[serial->buffer_pos] = '\0';
+
+        char* line_start = serial->buffer;
+        char* line_end = NULL;
+        while ((line_end = strchr(line_start, '\n')) != NULL) {
+            *line_end = '\0';
+            if (line_end > line_start && *(line_end - 1) == '\r') {
+                *(line_end - 1) = '\0';
+            }
+
+            if (strlen(line_start) > 0 && line_start[0] == '$') {
+                process_nmea_sentence(line_start, &serial->worker_data, NULL);
+                (void)gps_serial_enqueue_update(serial, &serial->worker_data, line_start);
+            }
+
+            line_start = line_end + 1;
+        }
+
+        int remaining = (int)(serial->buffer + serial->buffer_pos - line_start);
+        if (remaining > 0) {
+            memmove(serial->buffer, line_start, (size_t)remaining);
+        }
+        serial->buffer_pos = remaining;
+    }
+
+    return 0;
+}
+
 static bool baud_from_int(int baud, speed_t *out_speed) {
     switch (baud) {
         case 4800:   *out_speed = B4800;   return true;
@@ -36,6 +169,14 @@ bool gps_serial_init(gps_serial_t* serial) {
     serial->is_open = false;
     serial->buffer_pos = 0;
     serial->line_pos = 0;
+    gps_data_init(&serial->worker_data);
+    serial->worker_thread = NULL;
+    serial->queue_mutex = SDL_CreateMutex();
+    SDL_AtomicSet(&serial->worker_stop, 0);
+    serial->update_queue_head = 0;
+    serial->update_queue_tail = 0;
+    serial->update_queue_count = 0;
+    serial->dropped_updates = 0;
     memset(serial->buffer, 0, sizeof(serial->buffer));
     memset(serial->line_buffer, 0, sizeof(serial->line_buffer));
     
@@ -45,6 +186,10 @@ bool gps_serial_init(gps_serial_t* serial) {
 void gps_serial_cleanup(gps_serial_t* serial) {
     if (serial && serial->is_open) {
         gps_serial_close(serial);
+    }
+    if (serial && serial->queue_mutex) {
+        SDL_DestroyMutex(serial->queue_mutex);
+        serial->queue_mutex = NULL;
     }
 }
 
@@ -113,6 +258,20 @@ bool gps_serial_open(gps_serial_t* serial, const char* port, int baud_rate) {
     serial->is_open = true;
     serial->buffer_pos = 0;
     serial->line_pos = 0;
+    gps_data_init(&serial->worker_data);
+    serial->worker_data.status = GPS_STATUS_CONNECTED;
+    serial->worker_data.baud_rate = baud_rate;
+    strncpy(serial->worker_data.port_name, port, sizeof(serial->worker_data.port_name) - 1);
+    serial->worker_data.port_name[sizeof(serial->worker_data.port_name) - 1] = '\0';
+    serial->update_queue_head = 0;
+    serial->update_queue_tail = 0;
+    serial->update_queue_count = 0;
+    serial->dropped_updates = 0;
+    SDL_AtomicSet(&serial->worker_stop, 0);
+
+    if (serial->queue_mutex) {
+        serial->worker_thread = SDL_CreateThread(gps_serial_worker_thread_fn, "gpc-gps-serial-worker", serial);
+    }
     
     printf("GPS serial port opened: %s at %d baud\n", port, baud_rate);
     return true;
@@ -120,6 +279,12 @@ bool gps_serial_open(gps_serial_t* serial, const char* port, int baud_rate) {
 
 void gps_serial_close(gps_serial_t* serial) {
     if (!serial) return;
+
+    SDL_AtomicSet(&serial->worker_stop, 1);
+    if (serial->worker_thread) {
+        SDL_WaitThread(serial->worker_thread, NULL);
+        serial->worker_thread = NULL;
+    }
     
     if (serial->fd >= 0) {
         close(serial->fd);
@@ -129,6 +294,9 @@ void gps_serial_close(gps_serial_t* serial) {
     serial->is_open = false;
     serial->buffer_pos = 0;
     serial->line_pos = 0;
+    serial->update_queue_head = 0;
+    serial->update_queue_tail = 0;
+    serial->update_queue_count = 0;
 }
 
 bool gps_serial_is_open(const gps_serial_t* serial) {
@@ -192,51 +360,24 @@ int gps_serial_read_data(gps_serial_t* serial, gps_data_t* gps_data) {
 
 int gps_serial_read_data_with_console(gps_serial_t* serial, gps_data_t* gps_data, void* console_ptr) {
     if (!serial || !gps_data || !serial->is_open) return -1;
-    
-    ssize_t bytes_read = read(serial->fd, serial->buffer + serial->buffer_pos, 
-                             sizeof(serial->buffer) - serial->buffer_pos - 1);
-    
-    if (bytes_read < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0; // No data available
-        }
-        return -1; // Error
-    }
-    
-    if (bytes_read == 0) return 0; // No data
-    
-    serial->buffer_pos += bytes_read;
-    serial->buffer[serial->buffer_pos] = '\0';
-    
-    // Process complete lines
-    char* line_start = serial->buffer;
-    char* line_end;
     int processed_lines = 0;
-    
-    while ((line_end = strchr(line_start, '\n')) != NULL) {
-        *line_end = '\0';
-        
-        // Remove carriage return if present
-        if (line_end > line_start && *(line_end - 1) == '\r') {
-            *(line_end - 1) = '\0';
+
+    gps_serial_update_t update = {};
+    while (gps_serial_dequeue_update(serial, &update)) {
+        gps_serial_apply_snapshot(gps_data, &update);
+
+        if (console_ptr && update.raw_line[0] != '\0') {
+            console_add_line((console_t*)console_ptr, update.raw_line);
         }
-        
-        // Process the line if it looks like NMEA
-        if (strlen(line_start) > 0 && line_start[0] == '$') {
-            process_nmea_sentence(line_start, gps_data, console_ptr);
-            processed_lines++;
+
+        if (gps_data->logging_enabled && gps_data->log_file && update.raw_line[0] != '\0') {
+            fprintf(gps_data->log_file, "%s\n", update.raw_line);
+            fflush(gps_data->log_file);
         }
-        
-        line_start = line_end + 1;
+
+        processed_lines++;
     }
-    
-    // Move remaining data to beginning of buffer
-    int remaining = serial->buffer + serial->buffer_pos - line_start;
-    if (remaining > 0) {
-        memmove(serial->buffer, line_start, remaining);
-    }
-    serial->buffer_pos = remaining;
-    
+
     return processed_lines;
 }
 
